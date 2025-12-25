@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "LoveToolbox - 运营自动化悬浮球",
+  "version": "1.0",
+  "description": "自动分发素材到多个创意位，支持 Chrome/Edge。",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["style.css"]
+    }
+  ]
+}
