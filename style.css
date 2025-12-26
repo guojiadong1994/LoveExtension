@@ -1,56 +1,50 @@
-/* === 悬浮球 (位置微调版) === */
+/* === 悬浮球容器 - 完美复刻版 === */
 #love-float-ball {
     position: fixed !important;
-
-    /* 🌟 改动：向下挪30px，向右挪20px */
-    top: 50px !important;
-    left: 40px !important;
-
+    bottom: 100px !important; /* 默认位置 */
+    right: 50px !important;
     width: 48px !important;
     height: 48px !important;
-
-    /* 微灰磨砂背景 */
-    background: rgba(140, 140, 140, 0.25) !important;
-    backdrop-filter: blur(10px) !important;
-    -webkit-backdrop-filter: blur(10px) !important;
-
-    border: 1px solid rgba(255, 255, 255, 0.4) !important;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15) !important;
-
+    
+    /* 核心：微灰磨砂玻璃 */
+    background: rgba(255, 255, 255, 0.8) !important; 
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    
+    border: 1px solid rgba(255, 255, 255, 0.6) !important; 
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
+    
     border-radius: 50px !important;
     z-index: 2147483647 !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-
+    
     cursor: default !important;
-
-    /* 动画过渡 */
-    transition: width 0.3s cubic-bezier(0.25, 0.8, 0.25, 1),
+    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), 
                 background 0.3s, border-color 0.3s !important;
-
+    
     overflow: hidden !important;
     user-select: none !important;
 }
 
 /* 展开状态 */
 #love-float-ball:not(.is-dragging):hover {
-    width: 160px !important;
-    background: rgba(255, 255, 255, 0.75) !important;
-    border-color: rgba(255, 255, 255, 0.9) !important;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2) !important;
+    width: 180px !important; 
+    background: rgba(255, 255, 255, 0.95) !important; 
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15) !important;
 }
 
 /* 拖拽中状态 */
 #love-float-ball.is-dragging {
-    transition: none !important;
-    width: 160px !important;
-    background: rgba(255, 255, 255, 0.9) !important;
+    transition: none !important; 
+    width: 180px !important; 
+    background: rgba(255, 255, 255, 0.95) !important;
     cursor: grabbing !important;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2) !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2) !important;
 }
 
-/* 中间的四叶草图标 */
+/* 🍀 中间的四叶草图标 */
 .center-icon {
     font-size: 24px !important;
     line-height: 1 !important;
@@ -68,10 +62,10 @@
 /* 按钮组 */
 .btn-group {
     display: flex !important;
-    gap: 8px !important;
+    gap: 12px !important; 
     opacity: 0 !important;
-    transform: translateX(15px) !important;
-    transition: all 0.3s !important;
+    transform: translateX(20px) !important;
+    transition: all 0.3s 0.1s !important; /* 延迟一点点显示，更有质感 */
     pointer-events: none !important;
     align-items: center !important;
     justify-content: center !important;
@@ -88,30 +82,31 @@
 
 /* 按钮通用样式 */
 .action-btn {
-    width: 32px !important;
-    height: 32px !important;
+    width: 36px !important;
+    height: 36px !important;
     border-radius: 50% !important;
     border: none !important;
-    background: transparent !important;
+    background: rgba(0, 0, 0, 0.04) !important;
     cursor: pointer !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    transition: transform 0.2s !important;
-    line-height: 1 !important;
+    transition: all 0.2s !important;
     font-size: 18px !important;
 }
 
 .action-btn:hover {
-    background: rgba(0, 0, 0, 0.05) !important;
-    transform: scale(1.15) !important;
+    background: rgba(65, 95, 255, 0.1) !important; /* Vivo 蓝 */
+    transform: scale(1.1) !important;
+    color: #415fff !important;
 }
 
 /* 拖拽手柄 */
 #btn-move {
     cursor: grab !important;
     font-size: 18px !important;
-    color: #555 !important;
+    color: #999 !important;
+    background: transparent !important;
 }
 #btn-move:active {
     cursor: grabbing !important;
@@ -119,29 +114,25 @@
 
 #love-hidden-input { display: none !important; }
 
-/* 消息条样式 (保持不变) */
+/* 消息条 Toast */
 .love-toast {
     position: fixed !important;
     top: 30px !important;
     left: 50% !important;
     transform: translateX(-50%) translateY(-20px) !important;
-
-    background: rgba(255, 255, 255, 0.9) !important;
+    background: rgba(255, 255, 255, 0.95) !important;
     backdrop-filter: blur(10px) !important;
     border: 1px solid rgba(0, 0, 0, 0.05) !important;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
-
     color: #333 !important;
     font-size: 14px !important;
-    font-weight: 500 !important;
-    padding: 10px 24px !important;
+    font-weight: 600 !important;
+    padding: 12px 24px !important;
     border-radius: 50px !important;
-
     opacity: 0 !important;
     z-index: 2147483647 !important;
     transition: all 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28) !important;
     pointer-events: none !important;
-
     display: flex !important;
     align-items: center !important;
     gap: 8px !important;
