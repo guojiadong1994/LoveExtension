@@ -149,6 +149,7 @@ function initFloatBall() {
         <div class="btn-group">
             <div class="action-btn" id="btn-img" title="极速传图">🎇</div>
             <div class="action-btn" id="btn-video" title="批量视频">🎬</div>
+            <div class="action-btn" id="btn-text" title="批量填充应用文案">📝</div>
             <div class="action-btn" id="btn-move" title="拖动">✥</div>
         </div>
         <input type="file" id="love-hidden-input" multiple>
@@ -158,6 +159,7 @@ function initFloatBall() {
     const input = document.getElementById('love-hidden-input');
     const btnImg = document.getElementById('btn-img');
     const btnVideo = document.getElementById('btn-video');
+    const btnText = document.getElementById('btn-text');
     const btnMove = document.getElementById('btn-move');
 
     // 图片按钮：继续使用原来的图片上传机制，不动图片逻辑
@@ -176,6 +178,11 @@ function initFloatBall() {
         input.click();
     };
 
+    // 文案按钮：新增应用名称/应用副标题批量填充，不影响图片和视频上传逻辑
+    btnText.onclick = () => {
+        openAppTextFillDialog();
+    };
+
     input.onchange = async (e) => {
         if (e.target.files.length > 0) {
             const files = Array.from(e.target.files).slice(0, LOVE_VIDEO_CONFIG.maxFiles);
@@ -192,6 +199,345 @@ function initFloatBall() {
     setupDrag(ball, btnMove);
 }
 
+
+
+// === 1.1 应用名称/应用副标题批量填充：独立功能，不影响图片/视频 ===
+function openAppTextFillDialog() {
+    const existing = document.getElementById('love-text-fill-modal');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'love-text-fill-modal';
+    overlay.innerHTML = `
+        <style>
+            #love-text-fill-modal {
+                position: fixed !important;
+                inset: 0 !important;
+                z-index: 2147483647 !important;
+                background: rgba(0, 0, 0, 0.38) !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+            }
+            #love-text-fill-modal .love-text-dialog {
+                width: 420px !important;
+                background: #fff !important;
+                border-radius: 12px !important;
+                box-shadow: 0 12px 36px rgba(0,0,0,0.22) !important;
+                overflow: hidden !important;
+            }
+            #love-text-fill-modal .love-text-header {
+                padding: 16px 20px !important;
+                font-size: 16px !important;
+                font-weight: 700 !important;
+                border-bottom: 1px solid #eef0f5 !important;
+                color: #222 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+            }
+            #love-text-fill-modal .love-text-close {
+                cursor: pointer !important;
+                font-size: 20px !important;
+                color: #999 !important;
+                line-height: 1 !important;
+                user-select: none !important;
+            }
+            #love-text-fill-modal .love-text-body {
+                padding: 18px 20px 8px !important;
+            }
+            #love-text-fill-modal .love-text-field {
+                margin-bottom: 14px !important;
+            }
+            #love-text-fill-modal label {
+                display: block !important;
+                margin-bottom: 8px !important;
+                font-size: 13px !important;
+                color: #333 !important;
+                font-weight: 600 !important;
+            }
+            #love-text-fill-modal input {
+                width: 100% !important;
+                box-sizing: border-box !important;
+                height: 38px !important;
+                border: 1px solid #dcdfe6 !important;
+                border-radius: 8px !important;
+                padding: 0 12px !important;
+                font-size: 14px !important;
+                outline: none !important;
+            }
+            #love-text-fill-modal input:focus {
+                border-color: #415fff !important;
+                box-shadow: 0 0 0 2px rgba(65,95,255,0.12) !important;
+            }
+            #love-text-fill-modal .love-text-tip {
+                color: #888 !important;
+                font-size: 12px !important;
+                line-height: 1.5 !important;
+                margin-top: 2px !important;
+            }
+            #love-text-fill-modal .love-text-footer {
+                padding: 14px 20px 18px !important;
+                display: flex !important;
+                justify-content: flex-end !important;
+                gap: 10px !important;
+            }
+            #love-text-fill-modal button {
+                min-width: 86px !important;
+                height: 34px !important;
+                border-radius: 18px !important;
+                border: 1px solid #dcdfe6 !important;
+                background: #fff !important;
+                cursor: pointer !important;
+                font-size: 14px !important;
+            }
+            #love-text-fill-modal .love-text-confirm {
+                background: #415fff !important;
+                color: white !important;
+                border-color: #415fff !important;
+            }
+        </style>
+        <div class="love-text-dialog">
+            <div class="love-text-header">
+                <span>批量填充应用文案</span>
+                <span class="love-text-close" id="love-text-close">×</span>
+            </div>
+            <div class="love-text-body">
+                <div class="love-text-field">
+                    <label for="love-app-name-input">应用名称</label>
+                    <input id="love-app-name-input" type="text" placeholder="请输入应用名称">
+                </div>
+                <div class="love-text-field">
+                    <label for="love-app-subtitle-input">应用副标题</label>
+                    <input id="love-app-subtitle-input" type="text" placeholder="请输入应用副标题">
+                </div>
+                <div class="love-text-tip">确认后会依次切换所有“创意”标签，并填充相同内容；不会点击提交、保存或发布。</div>
+            </div>
+            <div class="love-text-footer">
+                <button type="button" id="love-text-cancel">取消</button>
+                <button type="button" class="love-text-confirm" id="love-text-confirm">开始填充</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('#love-text-close').onclick = close;
+    overlay.querySelector('#love-text-cancel').onclick = close;
+    overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) close();
+    });
+
+    const nameInput = overlay.querySelector('#love-app-name-input');
+    const subtitleInput = overlay.querySelector('#love-app-subtitle-input');
+    const confirmBtn = overlay.querySelector('#love-text-confirm');
+
+    confirmBtn.onclick = async () => {
+        const appName = nameInput.value.trim();
+        const appSubtitle = subtitleInput.value.trim();
+
+        if (!appName && !appSubtitle) {
+            showToast('请先填写应用名称或应用副标题', 3500, '⚠️');
+            nameInput.focus();
+            return;
+        }
+
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '填充中...';
+
+        try {
+            close();
+            await fillAppTextForAllCreatives(appName, appSubtitle);
+        } catch (err) {
+            console.error('[LoveToolbox] 批量填充应用文案失败：', err);
+            showToast('应用文案填充失败，请查看控制台', 6000, '⚠️');
+        }
+    };
+
+    setTimeout(() => nameInput.focus(), 50);
+}
+
+async function fillAppTextForAllCreatives(appName, appSubtitle) {
+    const tabs = getCreativeTabInfoForTextFill();
+    if (tabs.length === 0) {
+        showToast('未找到创意标签，无法填充应用文案', 5000, '⚠️');
+        return;
+    }
+
+    const ball = document.getElementById('love-float-ball');
+    if (ball) ball.style.background = '#e6f7ff';
+
+    clearLoveToasts();
+
+
+    let successCount = 0;
+
+    for (const item of tabs) {
+        const switched = await switchToCreativeTabForTextFill(item.index);
+        if (!switched) {
+            console.warn(`[LoveToolbox] 创意${item.index} 切换失败，跳过文案填充`);
+            continue;
+        }
+
+        const root = await waitForCreativeRootReadyForTextFill(item.index, 5000);
+        if (!root) {
+            console.warn(`[LoveToolbox] 创意${item.index} 未找到当前内容区域，跳过文案填充`);
+            continue;
+        }
+
+        const nameField = appName ? findCreativeTextInput(root, ['应用名称'], ['请输入应用名称', '应用名称']) : null;
+        const subtitleField = appSubtitle ? findCreativeTextInput(root, ['应用副标题', '副标题'], ['请输入应用副标题', '应用副标题', '副标题']) : null;
+
+        let filledAny = false;
+
+        if (appName) {
+            if (nameField) {
+                setFormControlValue(nameField, appName);
+                filledAny = true;
+            } else {
+                console.warn(`[LoveToolbox] 创意${item.index} 没找到应用名称输入框`);
+            }
+        }
+
+        if (appSubtitle) {
+            if (subtitleField) {
+                setFormControlValue(subtitleField, appSubtitle);
+                filledAny = true;
+            } else {
+                console.warn(`[LoveToolbox] 创意${item.index} 没找到应用副标题输入框`);
+            }
+        }
+
+        if (filledAny) {
+            successCount += 1;
+            console.log(`[LoveToolbox] 创意${item.index} 应用文案已填充`, { appName, appSubtitle });
+        }
+
+        await sleep(120);
+    }
+
+    if (ball) ball.style.background = '';
+    clearLoveToasts();
+    
+}
+
+function getCreativeTabInfoForTextFill() {
+    const tabs = Array.from(document.querySelectorAll('.ep-tabs__item, .el-tabs__item'));
+    const map = new Map();
+
+    for (const tab of tabs) {
+        const rawText = normalizeText(tab.innerText || tab.textContent || '');
+        const match = rawText.match(/创意\s*(\d+)/);
+        if (!match) continue;
+        const index = Number(match[1]);
+        if (!Number.isFinite(index)) continue;
+        if (!map.has(index)) map.set(index, { index, tab });
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.index - b.index);
+}
+
+async function switchToCreativeTabForTextFill(index) {
+    const tabs = getCreativeTabInfoForTextFill();
+    const item = tabs.find(t => t.index === index);
+    if (!item || !item.tab) return false;
+
+    item.tab.click();
+    await sleep(180);
+    return true;
+}
+
+async function waitForCreativeRootReadyForTextFill(index, timeoutMs = 5000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+        const root = getActiveCreativeRoot(index) || getVisibleCreativeRootForTextFill();
+        if (root && isElementVisible(root)) return root;
+        await nextFrame();
+    }
+
+    return getActiveCreativeRoot(index) || getVisibleCreativeRootForTextFill();
+}
+
+function getVisibleCreativeRootForTextFill() {
+    const candidates = Array.from(document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [id^="pane-"]'))
+        .filter(el => isElementVisible(el));
+
+    return candidates.find(el => normalizeText(el.innerText || '').includes('应用名称')) || candidates[0] || document.body;
+}
+
+function findCreativeTextInput(root, labelKeywords = [], placeholderKeywords = []) {
+    if (!root) return null;
+
+    const controls = Array.from(root.querySelectorAll('input, textarea'))
+        .filter(el => !isHiddenFormControl(el) && isElementVisible(el));
+
+    const placeholderMatched = controls.find(el => {
+        const placeholder = normalizeText(el.getAttribute('placeholder') || '');
+        return placeholderKeywords.some(keyword => placeholder.includes(normalizeText(keyword)));
+    });
+    if (placeholderMatched) return placeholderMatched;
+
+    const formItems = Array.from(root.querySelectorAll('.ep-form-item, .el-form-item, .form-item, [role="group"]'));
+
+    for (const item of formItems) {
+        const text = normalizeText(item.innerText || item.textContent || '');
+        const labelMatched = labelKeywords.some(keyword => text.includes(normalizeText(keyword)));
+        if (!labelMatched) continue;
+
+        const input = Array.from(item.querySelectorAll('input, textarea'))
+            .find(el => !isHiddenFormControl(el) && isElementVisible(el));
+        if (input) return input;
+    }
+
+    const labelNodes = Array.from(root.querySelectorAll('label, .ep-form-item__label, .el-form-item__label'));
+    for (const label of labelNodes) {
+        const labelText = normalizeText(label.innerText || label.textContent || '');
+        const labelMatched = labelKeywords.some(keyword => labelText.includes(normalizeText(keyword)));
+        if (!labelMatched) continue;
+
+        let node = label.parentElement;
+        for (let i = 0; i < 5 && node; i++) {
+            const input = Array.from(node.querySelectorAll('input, textarea'))
+                .find(el => !isHiddenFormControl(el) && isElementVisible(el));
+            if (input) return input;
+            node = node.parentElement;
+        }
+    }
+
+    return null;
+}
+
+function isHiddenFormControl(el) {
+    if (!el) return true;
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    return type === 'hidden' || type === 'file' || el.disabled || el.readOnly;
+}
+
+function setFormControlValue(el, value) {
+    if (!el) return false;
+
+    el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    el.focus();
+
+    const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+
+    if (descriptor && descriptor.set) {
+        descriptor.set.call(el, value);
+    } else {
+        el.value = value;
+    }
+
+    el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter' }));
+    el.blur();
+    return true;
+}
+
 // === 2. 图片核心逻辑：保持原机制 ===
 async function startAutomation(files, type) {
     // 安全保护：视频不再走旧逻辑，避免触发旧的 handleVideoCover / 确定按钮逻辑
@@ -202,6 +548,7 @@ async function startAutomation(files, type) {
     const ball = document.getElementById('love-float-ball');
     ball.style.background = '#e6f7ff';
 
+    
 
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
@@ -1249,7 +1596,6 @@ async function handleVideoCover(coverInput) {
 
     if (autoGenBtn) {
         autoGenBtn.click();
-        showToast('生成封面...', 1000, '🖼️');
         await randomSleep(800, 1200);
 
         const dialogBody = document.querySelector('.ep-dialog__body');
