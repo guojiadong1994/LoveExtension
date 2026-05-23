@@ -306,13 +306,21 @@ function openAppTextFillDialog() {
             <div class="love-text-body">
                 <div class="love-text-field">
                     <label for="love-app-name-input">应用名称</label>
-                    <input id="love-app-name-input" type="text" placeholder="请输入应用名称">
+                    <input id="love-app-name-input" type="text" placeholder="请输入应用名称" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
                 </div>
                 <div class="love-text-field">
                     <label for="love-app-subtitle-input">应用副标题</label>
-                    <input id="love-app-subtitle-input" type="text" placeholder="请输入应用副标题">
+                    <input id="love-app-subtitle-input" type="text" placeholder="请输入应用副标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
                 </div>
-                <div class="love-text-tip">确认后会依次切换所有“创意”标签，并填充相同内容；不会点击提交、保存或发布。</div>
+                <div class="love-text-field">
+                    <label for="love-creative-title-input">创意标题</label>
+                    <input id="love-creative-title-input" type="text" placeholder="请输入创意标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
+                </div>
+                <div class="love-text-field">
+                    <label for="love-creative-subtitle-input">创意副标题</label>
+                    <input id="love-creative-subtitle-input" type="text" placeholder="请输入创意副标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
+                </div>
+                <div class="love-text-tip">确认后会依次切换“创意1”到“创意10”；应用名称和应用副标题同时出现时才填应用文案；创意标题和创意副标题会单独填充；不会点击提交、保存或发布。</div>
             </div>
             <div class="love-text-footer">
                 <button type="button" id="love-text-cancel">取消</button>
@@ -332,14 +340,26 @@ function openAppTextFillDialog() {
 
     const nameInput = overlay.querySelector('#love-app-name-input');
     const subtitleInput = overlay.querySelector('#love-app-subtitle-input');
+    const creativeTitleInput = overlay.querySelector('#love-creative-title-input');
+    const creativeSubtitleInput = overlay.querySelector('#love-creative-subtitle-input');
     const confirmBtn = overlay.querySelector('#love-text-confirm');
+
+    // 禁止浏览器/密码管理器弹出历史输入记录，避免显示之前填过的内容。
+    disableLoveTextInputHistory([
+        nameInput,
+        subtitleInput,
+        creativeTitleInput,
+        creativeSubtitleInput
+    ]);
 
     confirmBtn.onclick = async () => {
         const appName = nameInput.value.trim();
         const appSubtitle = subtitleInput.value.trim();
+        const creativeTitle = creativeTitleInput.value.trim();
+        const creativeSubtitle = creativeSubtitleInput.value.trim();
 
-        if (!appName && !appSubtitle) {
-            showToast('请先填写应用名称或应用副标题', 3500, '⚠️');
+        if (!appName && !appSubtitle && !creativeTitle && !creativeSubtitle) {
+            showToast('请先填写需要填充的文案', 3500, '⚠️');
             nameInput.focus();
             return;
         }
@@ -349,20 +369,54 @@ function openAppTextFillDialog() {
 
         try {
             close();
-            await fillAppTextForAllCreatives(appName, appSubtitle);
+            await fillAppTextForAllCreatives(appName, appSubtitle, creativeTitle, creativeSubtitle);
         } catch (err) {
-            console.error('[LoveToolbox] 批量填充应用文案失败：', err);
-            showToast('应用文案填充失败，请查看控制台', 6000, '⚠️');
+            console.error('[LoveToolbox] 批量填充文案失败：', err);
+            showToast('文案填充失败，请查看控制台', 6000, '⚠️');
         }
     };
 
     setTimeout(() => nameInput.focus(), 50);
 }
 
-async function fillAppTextForAllCreatives(appName, appSubtitle) {
-    const tabs = getCreativeTabInfoForTextFill();
+function disableLoveTextInputHistory(inputs) {
+    const token = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    inputs.filter(Boolean).forEach((input, index) => {
+        const uniqueName = `love_text_${token}_${index}`;
+
+        // 这些属性只作用于插件弹窗输入框，不影响页面原本样式和图片/视频逻辑。
+        input.setAttribute('name', uniqueName);
+        input.setAttribute('autocomplete', 'new-password');
+        input.setAttribute('autocorrect', 'off');
+        input.setAttribute('autocapitalize', 'off');
+        input.setAttribute('spellcheck', 'false');
+        input.setAttribute('data-lpignore', 'true');
+        input.setAttribute('data-form-type', 'other');
+
+        // Chrome 有时会忽略 autocomplete=off/new-password。
+        // readonly 延迟解除可以阻止聚焦瞬间弹出历史记录下拉框。
+        input.setAttribute('readonly', 'readonly');
+
+        const unlock = () => {
+            setTimeout(() => {
+                input.removeAttribute('readonly');
+                input.setAttribute('autocomplete', 'new-password');
+            }, 60);
+        };
+
+        input.addEventListener('focus', unlock);
+        input.addEventListener('mousedown', unlock);
+        input.addEventListener('touchstart', unlock, { passive: true });
+    });
+}
+
+async function fillAppTextForAllCreatives(appName, appSubtitle, creativeTitle = '', creativeSubtitle = '') {
+    const tabs = getCreativeTabInfoForTextFill()
+        .filter(item => item.index >= 1 && item.index <= 10);
+
     if (tabs.length === 0) {
-        showToast('未找到创意标签，无法填充应用文案', 5000, '⚠️');
+        showToast('未找到创意1到创意10标签，无法填充文案', 5000, '⚠️');
         return;
     }
 
@@ -370,7 +424,6 @@ async function fillAppTextForAllCreatives(appName, appSubtitle) {
     if (ball) ball.style.background = '#e6f7ff';
 
     clearLoveToasts();
-
 
     let successCount = 0;
 
@@ -387,32 +440,77 @@ async function fillAppTextForAllCreatives(appName, appSubtitle) {
             continue;
         }
 
-        const nameField = appName ? findCreativeTextInput(root, ['应用名称'], ['请输入应用名称', '应用名称']) : null;
-        const subtitleField = appSubtitle ? findCreativeTextInput(root, ['应用副标题', '副标题'], ['请输入应用副标题', '应用副标题', '副标题']) : null;
-
         let filledAny = false;
 
-        if (appName) {
-            if (nameField) {
-                setFormControlValue(nameField, appName);
+        // 应用文案保护：只有同一个创意页里同时存在“应用名称”和“应用副标题”时，才填应用文案。
+        // 这样不会误填新页面里位于“创意标题/创意副标题”下面的单独“应用副标题”。
+        const appNameField = findCreativeTextInput(
+            root,
+            ['应用名称'],
+            ['请输入应用名称', '应用名称']
+        );
+
+        const appSubtitleField = findCreativeTextInput(
+            root,
+            ['应用副标题'],
+            ['请输入应用副标题', '应用副标题']
+        );
+
+        const canFillAppFields = !!appNameField && !!appSubtitleField;
+
+        if (canFillAppFields) {
+            if (appName) {
+                setFormControlValue(appNameField, appName);
+                filledAny = true;
+            }
+
+            if (appSubtitle) {
+                setFormControlValue(appSubtitleField, appSubtitle);
+                filledAny = true;
+            }
+        } else if (appName || appSubtitle) {
+            console.log(`[LoveToolbox] 创意${item.index} 未同时找到应用名称和应用副标题，跳过应用文案填充`);
+        }
+
+        // 新网页文案：单独填“创意标题/创意副标题”，不触碰下面那个单独的“应用副标题”。
+        if (creativeTitle) {
+            const creativeTitleField = findCreativeTextInput(
+                root,
+                ['创意标题'],
+                ['请输入创意标题', '创意标题']
+            );
+
+            if (creativeTitleField) {
+                setFormControlValue(creativeTitleField, creativeTitle);
                 filledAny = true;
             } else {
-                console.warn(`[LoveToolbox] 创意${item.index} 没找到应用名称输入框`);
+                console.warn(`[LoveToolbox] 创意${item.index} 没找到创意标题输入框`);
             }
         }
 
-        if (appSubtitle) {
-            if (subtitleField) {
-                setFormControlValue(subtitleField, appSubtitle);
+        if (creativeSubtitle) {
+            const creativeSubtitleField = findCreativeTextInput(
+                root,
+                ['创意副标题'],
+                ['请输入创意副标题', '创意副标题']
+            );
+
+            if (creativeSubtitleField) {
+                setFormControlValue(creativeSubtitleField, creativeSubtitle);
                 filledAny = true;
             } else {
-                console.warn(`[LoveToolbox] 创意${item.index} 没找到应用副标题输入框`);
+                console.warn(`[LoveToolbox] 创意${item.index} 没找到创意副标题输入框`);
             }
         }
 
         if (filledAny) {
             successCount += 1;
-            console.log(`[LoveToolbox] 创意${item.index} 应用文案已填充`, { appName, appSubtitle });
+            console.log(`[LoveToolbox] 创意${item.index} 文案已填充`, {
+                appName,
+                appSubtitle,
+                creativeTitle,
+                creativeSubtitle
+            });
         }
 
         await sleep(120);
@@ -420,11 +518,12 @@ async function fillAppTextForAllCreatives(appName, appSubtitle) {
 
     if (ball) ball.style.background = '';
     clearLoveToasts();
-    
+
+    console.log(`[LoveToolbox] 批量文案填充完成，共处理 ${successCount} 个创意`);
 }
 
 function getCreativeTabInfoForTextFill() {
-    const tabs = Array.from(document.querySelectorAll('.ep-tabs__item, .el-tabs__item'));
+    const tabs = Array.from(document.querySelectorAll('.ep-tabs__item, .el-tabs__item, [role="tab"]'));
     const map = new Map();
 
     for (const tab of tabs) {
@@ -462,10 +561,15 @@ async function waitForCreativeRootReadyForTextFill(index, timeoutMs = 5000) {
 }
 
 function getVisibleCreativeRootForTextFill() {
-    const candidates = Array.from(document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [id^="pane-"]'))
+    const candidates = Array.from(document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [id^="pane-"], [role="tabpanel"]'))
         .filter(el => isElementVisible(el));
 
-    return candidates.find(el => normalizeText(el.innerText || '').includes('应用名称')) || candidates[0] || document.body;
+    const textFillKeywords = ['应用名称', '应用副标题', '创意标题', '创意副标题'];
+
+    return candidates.find(el => {
+        const text = normalizeText(el.innerText || '');
+        return textFillKeywords.some(keyword => text.includes(normalizeText(keyword)));
+    }) || candidates[0] || document.body;
 }
 
 function findCreativeTextInput(root, labelKeywords = [], placeholderKeywords = []) {
