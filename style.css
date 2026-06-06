@@ -30,7 +30,7 @@
 
 /* 展开状态 */
 #love-float-ball:not(.is-dragging):hover {
-    width: 180px !important; 
+    width: 230px !important; 
     background: rgba(255, 255, 255, 0.95) !important; 
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15) !important;
 }
@@ -38,7 +38,7 @@
 /* 拖拽中状态 */
 #love-float-ball.is-dragging {
     transition: none !important; 
-    width: 180px !important; 
+    width: 230px !important; 
     background: rgba(255, 255, 255, 0.95) !important;
     cursor: grabbing !important;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2) !important;

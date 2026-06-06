@@ -137,7 +137,7 @@ function initFloatBall() {
                 border-radius: 50px !important; z-index: 2147483647 !important;
                 display: flex !important; align-items: center !important; justify-content: center !important;
             }
-            #love-float-ball:hover { width: 180px !important; }
+            #love-float-ball:hover { width: 230px !important; }
             .center-icon { font-size: 24px; position: absolute; pointer-events: none; transition: opacity 0.2s; }
             #love-float-ball:hover .center-icon { opacity: 0; }
             .btn-group { display: flex; gap: 10px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
@@ -150,6 +150,7 @@ function initFloatBall() {
             <div class="action-btn" id="btn-img" title="极速传图">🎇</div>
             <div class="action-btn" id="btn-video" title="批量视频">🎬</div>
             <div class="action-btn" id="btn-text" title="批量填充应用文案">📝</div>
+            <div class="action-btn" id="btn-link-check" title="链接检测">🔎</div>
             <div class="action-btn" id="btn-move" title="拖动">✥</div>
         </div>
         <input type="file" id="love-hidden-input" multiple>
@@ -160,6 +161,7 @@ function initFloatBall() {
     const btnImg = document.getElementById('btn-img');
     const btnVideo = document.getElementById('btn-video');
     const btnText = document.getElementById('btn-text');
+    const btnLinkCheck = document.getElementById('btn-link-check');
     const btnMove = document.getElementById('btn-move');
 
     // 图片按钮：继续使用原来的图片上传机制，不动图片逻辑
@@ -183,6 +185,11 @@ function initFloatBall() {
         openAppTextFillDialog();
     };
 
+    // 链接检测按钮：只在用户主动点击时检测当前页面三个链接，不做提交/保存等操作。
+    btnLinkCheck.onclick = () => {
+        runLoveLinkCheck();
+    };
+
     input.onchange = async (e) => {
         if (e.target.files.length > 0) {
             const files = Array.from(e.target.files).slice(0, LOVE_VIDEO_CONFIG.maxFiles);
@@ -199,6 +206,810 @@ function initFloatBall() {
     setupDrag(ball, btnMove);
 }
 
+
+
+
+
+// === 1.2 vivo DP 链接一键检测：只读页面内容，不提交、不保存、不自动拦截 ===
+const LOVE_LINK_CHECK_CONFIG = {
+    targetPid: '2088531282770863',
+    targetChannel: 'vivoxxl',
+    forbiddenChannels: [
+        'huawei', 'huaweihongfei',
+        'oppo', 'oppoxxl', 'oppojjpush',
+        'xiaomi', 'xiaomixxl',
+        'rongyao', 'rongyaoxxl',
+        'honor'
+    ],
+    fields: {
+        expose: '曝光监测地址',
+        click: '点击监测地址',
+        deeplink: 'DeepLink'
+    },
+    duplicateCheckGroups: [
+        { keys: ['requestFrom'], displayName: 'requestFrom' },
+        { keys: ['action'], displayName: 'action' },
+        { keys: ['benefit'], displayName: 'benefit' },
+        { keys: ['rtaid'], displayName: 'rtaid' },
+        { keys: ['partnerId', 'partnerld', 'partnerid'], displayName: 'partnerld/partnerId' },
+        { keys: ['media'], displayName: 'media' },
+        { keys: ['cjId', 'cjid'], displayName: 'cjId' },
+        { keys: ['projectId', 'projectid'], displayName: 'projectId' },
+        { keys: ['taskId', 'taskid'], displayName: 'taskId' },
+        { keys: ['targetId', 'targetid'], displayName: 'targetId' },
+        { keys: ['sceneId', 'sceneid'], displayName: 'sceneId' },
+        { keys: ['shareUserld', 'shareUserId', 'shareUserid'], displayName: 'shareUserld/shareUserId' }
+    ]
+};
+
+function runLoveLinkCheck() {
+    try {
+        const values = collectLoveLinkFieldValues();
+        const errors = validateLoveVivoDpLinks(values);
+        showLoveLinkCheckModal(errors);
+    } catch (err) {
+        console.error('[LoveToolbox] 链接检测失败：', err);
+        showLoveLinkCheckModal(['链接检测程序发生异常，请联系开发者检查控制台日志。']);
+    }
+}
+
+function collectLoveLinkFieldValues() {
+    return {
+        expose: readLoveFieldByLabel(LOVE_LINK_CHECK_CONFIG.fields.expose),
+        click: readLoveFieldByLabel(LOVE_LINK_CHECK_CONFIG.fields.click),
+        deeplink: readLoveFieldByLabel(LOVE_LINK_CHECK_CONFIG.fields.deeplink)
+    };
+}
+
+function readLoveFieldByLabel(labelText) {
+    const field = findLoveInputNearLabel(labelText);
+    if (!field) {
+        return { label: labelText, value: '', found: false, element: null };
+    }
+    return {
+        label: labelText,
+        value: getLoveControlValue(field),
+        found: true,
+        element: field
+    };
+}
+
+function findLoveInputNearLabel(labelText) {
+    const labels = findLoveLabelElements(labelText);
+    const controls = getVisibleLoveFormControls();
+
+    for (const label of labels) {
+        // 不写死 ep-id-xxxx。只把 label.for 当作“页面当前生成的临时桥梁”使用。
+        // 只要 label 文本仍是“曝光监测地址 / 点击监测地址 / DeepLink”，即使 id 变化也能重新定位。
+        const byFor = findControlByLabelFor(label, controls);
+        if (byFor) return byFor;
+
+        // 当前页面的主结构：.ep-form-item 里左侧 label，右侧 textarea。
+        // 这一层比纯坐标查找稳，也能避开右侧“管理xxx”按钮。
+        const byFormItem = findControlInSameFormItem(label, controls);
+        if (byFormItem) return byFormItem;
+
+        // 如果以后组件库小改，label.for 不存在，但输入框仍在 label 后面的兄弟节点里，用这一层兜底。
+        const bySibling = findControlBySiblingAfterLabel(label, controls);
+        if (bySibling) return bySibling;
+
+        // 再向上找祖先容器，兼容外层包裹结构变化。
+        const byAncestor = findControlByAncestor(label, controls);
+        if (byAncestor) return byAncestor;
+
+        // 最后才用视觉位置兜底：找同一行右侧最近的输入框。
+        const byGeometry = findControlByGeometry(label, controls);
+        if (byGeometry) return byGeometry;
+    }
+
+    return null;
+}
+
+function findLoveLabelElements(labelText) {
+    const wanted = normalizeLoveText(labelText);
+    const exact = [];
+    const loose = [];
+
+    // 当前页面三项都是 label 标签；span/div 只作为兜底。
+    // 注意：页面右侧有“管理曝光监测地址 / 管理DeepLink”按钮，所以必须优先精确匹配。
+    const nodes = Array.from(document.querySelectorAll('label, span, div, p, td, th'));
+
+    for (const el of nodes) {
+        if (!isElementVisible(el)) continue;
+        if (el.closest('#love-float-ball, #love-link-check-modal, #love-text-fill-modal')) continue;
+
+        const text = normalizeLoveText(el.innerText || el.textContent || '');
+        if (!text) continue;
+
+        if (text === wanted) {
+            exact.push(el);
+            continue;
+        }
+
+        // 兜底匹配只接受非常短的文本，避免匹配到“管理xxx”按钮或大容器。
+        const maybeLabel = text.length <= wanted.length + 2 && text.includes(wanted);
+        const notManagementButton = !text.startsWith('管理') && !el.closest('button, .ep-button, .el-button');
+        if (maybeLabel && notManagementButton) {
+            loose.push(el);
+        }
+    }
+
+    // 如果存在精确标签，就只用精确标签；不要再把“管理DeepLink”这类按钮混进来。
+    const result = exact.length > 0 ? exact : loose;
+
+    // 排序原则：label 标签优先；有 for 属性优先；面积小的优先。
+    return result.sort((a, b) => {
+        const aScore = (a.tagName === 'LABEL' ? -1000 : 0) + (a.getAttribute('for') ? -500 : 0);
+        const bScore = (b.tagName === 'LABEL' ? -1000 : 0) + (b.getAttribute('for') ? -500 : 0);
+        if (aScore !== bScore) return aScore - bScore;
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return (ar.width * ar.height) - (br.width * br.height);
+    });
+}
+
+function findControlByLabelFor(labelEl, controls) {
+    const targetId = labelEl.getAttribute && labelEl.getAttribute('for');
+    if (!targetId) return null;
+
+    let target = null;
+    try {
+        target = document.getElementById(targetId) || document.querySelector(`#${CSS.escape(targetId)}`);
+    } catch (e) {
+        target = document.getElementById(targetId);
+    }
+
+    if (target && controls.includes(target)) return target;
+
+    // 有些组件会把 id 挂在内部 textarea/input，label.for 指向外层或反过来，这里做一次近邻兜底。
+    const formItem = labelEl.closest('.ep-form-item, .el-form-item, [role="group"]');
+    if (formItem) {
+        const local = controls.filter(control => formItem.contains(control));
+        if (local.length === 1) return local[0];
+        if (local.length > 1) return preferTextareaControl(local) || findControlByGeometry(labelEl, local);
+    }
+
+    return null;
+}
+
+function findControlInSameFormItem(labelEl, controls) {
+    const formItem = labelEl.closest('.ep-form-item, .el-form-item, [role="group"]');
+    if (!formItem) return null;
+
+    const local = controls.filter(control => formItem.contains(control));
+    if (local.length === 1) return local[0];
+    if (local.length > 1) {
+        return preferTextareaControl(local) || findControlByGeometry(labelEl, local);
+    }
+    return null;
+}
+
+function findControlBySiblingAfterLabel(labelEl, controls) {
+    const visited = new Set();
+
+    function collectFrom(node) {
+        if (!node || visited.has(node)) return [];
+        visited.add(node);
+        return controls.filter(control => node.contains(control));
+    }
+
+    // 先看 label 后面的兄弟节点。
+    let sibling = labelEl.nextElementSibling;
+    for (let i = 0; i < 5 && sibling; i += 1) {
+        const local = collectFrom(sibling);
+        if (local.length === 1) return local[0];
+        if (local.length > 1) return preferTextareaControl(local) || findControlByGeometry(labelEl, local);
+        sibling = sibling.nextElementSibling;
+    }
+
+    // 再看 label 父节点后面的兄弟节点，兼容 label 和 content 分开包裹的结构。
+    let parentSibling = labelEl.parentElement?.nextElementSibling || null;
+    for (let i = 0; i < 5 && parentSibling; i += 1) {
+        const local = collectFrom(parentSibling);
+        if (local.length === 1) return local[0];
+        if (local.length > 1) return preferTextareaControl(local) || findControlByGeometry(labelEl, local);
+        parentSibling = parentSibling.nextElementSibling;
+    }
+
+    return null;
+}
+
+function preferTextareaControl(controls) {
+    return controls.find(el => el.tagName === 'TEXTAREA') || controls.find(el => el.tagName === 'INPUT') || controls[0] || null;
+}
+
+function getVisibleLoveFormControls() {
+    return Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'))
+        .filter(el => {
+            if (!isElementVisible(el)) return false;
+            if (el.closest('#love-float-ball, #love-link-check-modal, #love-text-fill-modal')) return false;
+            if (el.tagName === 'INPUT') {
+                const type = (el.getAttribute('type') || 'text').toLowerCase();
+                if (['hidden', 'file', 'checkbox', 'radio', 'button', 'submit', 'reset'].includes(type)) return false;
+            }
+            return true;
+        });
+}
+
+function findControlByAncestor(labelEl, controls) {
+    let node = labelEl;
+    for (let depth = 0; depth < 7 && node; depth += 1) {
+        const localControls = controls.filter(control => node.contains(control));
+        if (localControls.length === 1) return localControls[0];
+        if (localControls.length > 1) {
+            const byGeometry = findControlByGeometry(labelEl, localControls);
+            if (byGeometry) return byGeometry;
+        }
+        node = node.parentElement;
+    }
+    return null;
+}
+
+function findControlByGeometry(labelEl, controls) {
+    const lr = labelEl.getBoundingClientRect();
+    const labelMidY = lr.top + lr.height / 2;
+
+    const candidates = controls
+        .map(control => {
+            const cr = control.getBoundingClientRect();
+            const controlMidY = cr.top + cr.height / 2;
+            const yDistance = Math.abs(controlMidY - labelMidY);
+            const xDistance = Math.abs(cr.left - lr.right);
+            const isRightSide = cr.left >= lr.left - 10;
+            const verticalOverlap = !(cr.bottom < lr.top - 12 || cr.top > lr.bottom + 12);
+            return { control, yDistance, xDistance, isRightSide, verticalOverlap };
+        })
+        .filter(item => item.isRightSide && (item.verticalOverlap || item.yDistance <= 36))
+        .sort((a, b) => (a.yDistance - b.yDistance) || (a.xDistance - b.xDistance));
+
+    return candidates[0]?.control || null;
+}
+
+function getLoveControlValue(control) {
+    if (!control) return '';
+    if ('value' in control) return String(control.value || '').trim();
+    return String(control.innerText || control.textContent || '').trim();
+}
+
+function validateLoveVivoDpLinks(values) {
+    const errors = [];
+    const expose = values.expose;
+    const click = values.click;
+    const deeplink = values.deeplink;
+
+    validateLoveSingleLink(expose, errors, { expectedType: 'expose' });
+    validateLoveSingleLink(click, errors, { expectedType: 'click' });
+    validateLoveSingleLink(deeplink, errors, { expectedType: 'deeplink' });
+
+
+    validateLoveMonitorPid(expose, errors);
+    validateLoveMonitorPid(click, errors);
+    validateLoveDeepLinkShareUserId(deeplink, errors);
+
+    validateLoveSameParamAcrossThree(values, errors, ['partnerId', 'partnerld', 'partnerid'], 'partnerld/partnerId');
+    validateLoveSameParamAcrossThree(values, errors, ['benefit'], 'benefit');
+    validateLoveRtaidConsistency(expose, click, errors);
+    validateLoveHkConsistency(values, errors);
+
+    [expose, click, deeplink].forEach(item => validateLoveDuplicateCriticalFields(item, errors));
+
+    return dedupeLoveErrors(errors);
+}
+
+function validateLoveSingleLink(item, errors, options = {}) {
+    const label = item.label;
+    const value = item.value;
+
+    if (!item.found) {
+        errors.push(`未找到【${label}】输入框，请确认当前页面是否已经打开到广告链接填写区域。`);
+        return;
+    }
+
+    if (!value) {
+        errors.push(`【${label}】不能为空，请填写链接。`);
+        return;
+    }
+
+    validateLoveBasicUrlSyntax(label, value, errors);
+    validateLoveChannel(label, value, errors);
+
+    if (options.expectedType === 'expose') {
+        const actionValues = getLoveMeaningfulParamValues(value, ['action']);
+        if (actionValues.length !== 1 || actionValues[0] !== 'expose') {
+            errors.push(`【${label}】不是曝光链接，action 必须严格等于 expose，当前检测到：${formatLoveValues(actionValues)}。`);
+        }
+    }
+
+    if (options.expectedType === 'click') {
+        const actionValues = getLoveMeaningfulParamValues(value, ['action']);
+        if (actionValues.length !== 1 || actionValues[0] !== 'click') {
+            errors.push(`【${label}】不是点击链接，action 必须严格等于 click，当前检测到：${formatLoveValues(actionValues)}。`);
+        }
+    }
+
+    if (options.expectedType === 'deeplink') {
+        if (!isLoveDeepLink(value)) {
+            errors.push(`【${label}】不是 DP 链接，必须能识别到 alipays:// 或 alipays://platformapi/startapp。`);
+        }
+    }
+}
+
+function validateLoveBasicUrlSyntax(label, link, errors) {
+    const raw = String(link || '');
+
+    if (/\s/.test(raw)) {
+        errors.push(`【${label}】链接中存在空格、换行或制表符，字段与字段之间不能有空格。`);
+    }
+
+    if (raw.includes('*')) {
+        errors.push(`【${label}】链接中存在 * 号，请检查是否仍有未替换的占位符。`);
+    }
+
+    if (/[＆？＝％＃]/.test(raw)) {
+        errors.push(`【${label}】链接中存在中文全角符号，请改成英文半角符号。`);
+    }
+
+    if (/%(?![0-9A-Fa-f]{2})/.test(raw)) {
+        errors.push(`【${label}】链接中存在错误的 % 编码，% 后面必须是两位十六进制字符。`);
+    }
+
+    if (raw.includes('&&')) {
+        errors.push(`【${label}】链接中存在连续的 &&，请检查是否多写了 &。`);
+    }
+
+    if (/[?&]$/.test(raw)) {
+        errors.push(`【${label}】链接末尾是 ? 或 &，请检查是否缺少字段。`);
+    }
+
+    if (!isLoveSupportedUrlLike(raw)) {
+        errors.push(`【${label}】链接格式异常，应该是 http/https 链接或 alipays:// DP 链接。`);
+    }
+
+    validateLoveQueryStructure(label, raw, errors);
+}
+
+function isLoveSupportedUrlLike(text) {
+    const trimmed = String(text || '').trim();
+    return /^https?:\/\//i.test(trimmed) || /^alipays:\/\//i.test(trimmed) || loveDecodeLayers(trimmed).some(layer => /^alipays:\/\//i.test(layer));
+}
+
+function validateLoveQueryStructure(label, link, errors) {
+    const layers = loveDecodeLayers(link, 4);
+    const seenMessages = new Set();
+
+    for (const layer of layers) {
+        const normalized = normalizeLoveUrlText(layer);
+        const queryPart = getLoveQueryPart(normalized);
+        if (!queryPart) continue;
+
+        const segments = queryPart.split('&');
+        segments.forEach((segment, index) => {
+            const position = index + 1;
+            if (segment === '') {
+                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段为空，请检查是否多写了 &。`);
+                return;
+            }
+            if (!segment.includes('=')) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段缺少等号：${shortLoveText(segment)}。`);
+                return;
+            }
+
+            const eqIndex = segment.indexOf('=');
+            const key = segment.slice(0, eqIndex).trim();
+            const val = segment.slice(eqIndex + 1);
+
+            if (!key) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段的字段名为空，请检查 & 或 = 的位置。`);
+            }
+
+            if (/\s/.test(key)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】字段名存在空格：${shortLoveText(key)}。`);
+            }
+
+            if (/[?#\\/]/.test(key)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】字段名疑似异常：${shortLoveText(key)}。`);
+            }
+
+            // DP 链接里 ugParams=targetId=xxx 是平台合法写法，不能按“值里又出现等号”误报。
+            const keyLower = key.toLowerCase();
+            const allowNestedAssignments = keyLower === 'ugparams';
+            if (!allowNestedAssignments && /[A-Za-z_][A-Za-z0-9_]{1,40}=/.test(val)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】字段 ${key} 的值里又出现了等号：${shortLoveText(segment)}。这通常是少写了 &，导致后面的字段被合并进前一个字段。`);
+            }
+        });
+    }
+}
+
+function getLoveQueryPart(text) {
+    const qIndex = text.indexOf('?');
+    if (qIndex >= 0) {
+        return text.slice(qIndex + 1).split('#')[0];
+    }
+
+    // 处理已经被解码出来的 ugParams=targetId=...&tenantId=... 这类片段。
+    if (text.includes('&') && text.includes('=')) {
+        return text.split('#')[0];
+    }
+
+    return '';
+}
+
+function validateLoveChannel(label, link, errors) {
+    // 渠道检测必须基于字段值严格判断，不能再用 layer.includes('vivoxxl')。
+    // 例如 requestFrom=vivoxxl2、media=vivoxxl_bak、partnerId 里含 vivoxxl，都不能算通过。
+    const requestFromValues = getLoveMeaningfulParamValues(link, ['requestFrom']);
+    const mediaValues = getLoveMeaningfulParamValues(link, ['media']);
+    const channelItems = [
+        ...requestFromValues.map(value => ({ key: 'requestFrom', value })),
+        ...mediaValues.map(value => ({ key: 'media', value }))
+    ];
+
+    const hasExactVivo = channelItems.some(item => item.value === LOVE_LINK_CHECK_CONFIG.targetChannel);
+
+    if (!hasExactVivo) {
+        const detected = channelItems.length > 0
+            ? channelItems.map(item => `${item.key}=${item.value}`).join('、')
+            : '空/未检测到 requestFrom 或 media';
+        errors.push(`【${label}】不是 vivo 信息流渠道，渠道字段必须严格等于 ${LOVE_LINK_CHECK_CONFIG.targetChannel}，当前检测到：${detected}。`);
+    }
+
+    const invalidChannelItems = channelItems.filter(item => item.value !== LOVE_LINK_CHECK_CONFIG.targetChannel);
+    if (invalidChannelItems.length > 0) {
+        errors.push(`【${label}】检测到渠道字段不是 ${LOVE_LINK_CHECK_CONFIG.targetChannel}：${invalidChannelItems.map(item => `${item.key}=${item.value}`).join('、')}。`);
+    }
+
+    const badChannels = channelItems
+        .map(item => item.value.toLowerCase())
+        .filter(value => value !== LOVE_LINK_CHECK_CONFIG.targetChannel)
+        .filter(value => LOVE_LINK_CHECK_CONFIG.forbiddenChannels.includes(value));
+
+    if (badChannels.length > 0) {
+        errors.push(`【${label}】检测到其他渠道标识：${Array.from(new Set(badChannels)).join('、')}，请确认是否复制错渠道。`);
+    }
+}
+
+
+function validateLoveHkConsistency(values, errors) {
+    const items = [values.expose, values.click, values.deeplink];
+    const hkByLabel = [];
+
+    for (const item of items) {
+        if (!item.found || !item.value) continue;
+        const hkItems = extractLoveHkItems(item.value);
+        if (hkItems.length === 0) {
+            errors.push(`【${item.label}】未检测到 HK 开头的业务编号，请检查 benefit/cjId 等字段。`);
+        } else {
+            hkByLabel.push({ label: item.label, values: hkItems });
+        }
+    }
+
+    const allHk = Array.from(new Set(hkByLabel.flatMap(item => item.values)));
+    if (allHk.length > 1) {
+        errors.push(`三个链接中的 HK 编号不一致：${hkByLabel.map(item => `${item.label}=${item.values.join('、')}`).join('；')}。`);
+    }
+}
+
+function extractLoveHkItems(link) {
+    const set = new Set();
+    for (const layer of loveDecodeLayers(link, 6)) {
+        const matches = layer.match(/HK[A-Za-z0-9]+/g) || [];
+        matches.forEach(value => set.add(value));
+    }
+    return Array.from(set);
+}
+
+function validateLoveDuplicateCriticalFields(item, errors) {
+    if (!item.found || !item.value) return;
+
+    for (const group of LOVE_LINK_CHECK_CONFIG.duplicateCheckGroups) {
+        const occurrences = getLoveParamOccurrences(item.value, group.keys);
+        const values = Array.from(new Set(occurrences.map(item => item.value)));
+        if (values.length > 1) {
+            const detail = occurrences.map(record => `${record.key}=${record.value}`).join('、');
+            errors.push(`【${item.label}】检测到关键字段 ${group.displayName} 重复且值不一致：${detail}。`);
+        }
+    }
+}
+
+function getLoveParamOccurrences(link, keys) {
+    const wantedKeys = keys.map(k => k.toLowerCase());
+    const records = [];
+    const seen = new Set();
+    const layers = loveDecodeLayers(link, 6);
+
+    for (const layer of layers) {
+        const normalized = normalizeLoveUrlText(layer);
+        const queryPart = getLoveQueryPart(normalized);
+        if (!queryPart) continue;
+
+        const segments = queryPart.split('&');
+        for (const segment of segments) {
+            const eqIndex = segment.indexOf('=');
+            if (eqIndex <= 0) continue;
+            const key = segment.slice(0, eqIndex).trim();
+            const value = normalizeLoveParamValue(segment.slice(eqIndex + 1).trim());
+            if (!wantedKeys.includes(key.toLowerCase())) continue;
+            if (isLovePlaceholderValue(value)) continue;
+
+            const uniqueKey = `${key.toLowerCase()}=${value}`;
+            if (seen.has(uniqueKey)) continue;
+            seen.add(uniqueKey);
+            records.push({ key, value });
+        }
+    }
+
+    return records;
+}
+
+function validateLoveMonitorPid(item, errors) {
+    if (!item.found || !item.value) return;
+    const pidValues = getLoveMeaningfulParamValues(item.value, ['pid']);
+    if (!pidValues.includes(LOVE_LINK_CHECK_CONFIG.targetPid)) {
+        errors.push(`【${item.label}】pid 字段应包含 ${LOVE_LINK_CHECK_CONFIG.targetPid}，当前检测到：${formatLoveValues(pidValues)}。`);
+    }
+}
+
+function validateLoveDeepLinkShareUserId(item, errors) {
+    if (!item.found || !item.value) return;
+    const values = getLoveMeaningfulParamValues(item.value, ['shareUserld', 'shareUserId', 'shareUserid']);
+    if (!values.includes(LOVE_LINK_CHECK_CONFIG.targetPid)) {
+        errors.push(`【${item.label}】shareUserld/shareUserId 字段应为 ${LOVE_LINK_CHECK_CONFIG.targetPid}，当前检测到：${formatLoveValues(values)}。`);
+    }
+}
+
+function validateLoveSameParamAcrossThree(values, errors, keys, displayName) {
+    const items = [values.expose, values.click, values.deeplink];
+    const valueByLabel = [];
+
+    for (const item of items) {
+        if (!item.found || !item.value) continue;
+        const vals = getLoveMeaningfulParamValues(item.value, keys);
+        if (vals.length === 0) {
+            errors.push(`【${item.label}】缺少 ${displayName} 字段或字段为空。`);
+        } else {
+            if (vals.length > 1) {
+                errors.push(`【${item.label}】检测到多个不同的 ${displayName}：${vals.join('、')}，请检查是否有重复或冲突字段。`);
+            }
+            valueByLabel.push({ label: item.label, value: vals[0] });
+        }
+    }
+
+    const unique = Array.from(new Set(valueByLabel.map(item => item.value)));
+    if (unique.length > 1) {
+        errors.push(`三个链接的 ${displayName} 字段不一致：${valueByLabel.map(item => `${item.label}=${item.value}`).join('；')}。`);
+    }
+}
+
+function validateLoveRtaidConsistency(expose, click, errors) {
+    if (!expose.found || !click.found || !expose.value || !click.value) return;
+
+    const exposeVals = getLoveMeaningfulParamValues(expose.value, ['rtaid']);
+    const clickVals = getLoveMeaningfulParamValues(click.value, ['rtaid']);
+
+    if (exposeVals.length === 0) {
+        errors.push(`【${expose.label}】缺少 rtaid 字段或字段为空。`);
+    }
+    if (clickVals.length === 0) {
+        errors.push(`【${click.label}】缺少 rtaid 字段或字段为空。`);
+    }
+
+    if (exposeVals.length > 0 && clickVals.length > 0) {
+        if (exposeVals[0] !== clickVals[0]) {
+            errors.push(`曝光监测地址和点击监测地址的 rtaid 不一致：曝光=${exposeVals[0]}；点击=${clickVals[0]}。`);
+        }
+        if (exposeVals.length > 1) {
+            errors.push(`【${expose.label}】检测到多个不同的 rtaid：${exposeVals.join('、')}。`);
+        }
+        if (clickVals.length > 1) {
+            errors.push(`【${click.label}】检测到多个不同的 rtaid：${clickVals.join('、')}。`);
+        }
+    }
+}
+
+function isLoveDeepLink(link) {
+    return loveDecodeLayers(link, 4).some(layer => {
+        const lower = layer.toLowerCase();
+        return lower.startsWith('alipays://') || lower.includes('alipays://platformapi/startapp');
+    });
+}
+
+function getLoveMeaningfulParamValues(link, keys) {
+    const values = getLoveParamValues(link, keys)
+        .map(v => normalizeLoveParamValue(v))
+        .filter(v => !isLovePlaceholderValue(v));
+    return Array.from(new Set(values));
+}
+
+function getLoveParamValues(link, keys) {
+    const wantedKeys = keys.map(k => k.toLowerCase());
+    const values = [];
+    const layers = loveDecodeLayers(link, 5);
+
+    for (const layer of layers) {
+        const normalized = normalizeLoveUrlText(layer);
+        const queryPart = getLoveQueryPart(normalized);
+        if (!queryPart) continue;
+
+        const segments = queryPart.split('&');
+        for (const segment of segments) {
+            const eqIndex = segment.indexOf('=');
+            if (eqIndex <= 0) continue;
+            const key = segment.slice(0, eqIndex).trim();
+            const value = segment.slice(eqIndex + 1).trim();
+            if (wantedKeys.includes(key.toLowerCase())) {
+                values.push(value);
+            }
+        }
+    }
+
+    return values;
+}
+
+function loveDecodeLayers(text, maxLayers = 4) {
+    const layers = [];
+    let current = normalizeLoveUrlText(String(text || '').trim());
+
+    for (let i = 0; i < maxLayers; i += 1) {
+        if (!layers.includes(current)) layers.push(current);
+        let next = current;
+        try {
+            next = decodeURIComponent(current.replace(/\+/g, '%20'));
+            next = normalizeLoveUrlText(next);
+        } catch (e) {
+            break;
+        }
+        if (next === current) break;
+        current = next;
+    }
+
+    return layers;
+}
+
+function normalizeLoveUrlText(text) {
+    return String(text || '').replace(/&amp;/gi, '&').trim();
+}
+
+function normalizeLoveParamValue(value) {
+    return String(value || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function isLovePlaceholderValue(value) {
+    const v = normalizeLoveParamValue(value);
+    if (!v) return true;
+    if (/^_+[A-Z0-9]+_+$/i.test(v)) return true;
+    if (/^(xxxx|yyyy|null|undefined|-|\*\*\*)$/i.test(v)) return true;
+    return false;
+}
+
+function formatLoveValues(values) {
+    if (!values || values.length === 0) return '空/未检测到';
+    return values.join('、');
+}
+
+function addUniqueLoveError(errors, seenMessages, message) {
+    if (seenMessages.has(message)) return;
+    seenMessages.add(message);
+    errors.push(message);
+}
+
+function dedupeLoveErrors(errors) {
+    return Array.from(new Set(errors));
+}
+
+function shortLoveText(text, maxLen = 120) {
+    const value = String(text || '');
+    if (value.length <= maxLen) return value;
+    return value.slice(0, maxLen) + '...';
+}
+
+function normalizeLoveText(text) {
+    return String(text || '').replace(/\s+/g, '').trim();
+}
+
+function escapeLoveHtml(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function showLoveLinkCheckModal(errors) {
+    const existing = document.getElementById('love-link-check-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'love-link-check-modal';
+    const hasErrors = errors && errors.length > 0;
+
+    modal.innerHTML = `
+        <style>
+            #love-link-check-modal {
+                position: fixed !important;
+                inset: 0 !important;
+                z-index: 2147483647 !important;
+                background: rgba(0, 0, 0, 0.35) !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+            }
+            #love-link-check-modal .love-link-dialog {
+                width: 560px !important;
+                max-width: calc(100vw - 40px) !important;
+                max-height: calc(100vh - 80px) !important;
+                background: #fff !important;
+                border-radius: 14px !important;
+                box-shadow: 0 16px 44px rgba(0,0,0,0.25) !important;
+                overflow: hidden !important;
+            }
+            #love-link-check-modal .love-link-header {
+                height: 52px !important;
+                padding: 0 18px 0 22px !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                border-bottom: 1px solid #eef0f5 !important;
+                font-size: 16px !important;
+                font-weight: 700 !important;
+                color: #222 !important;
+            }
+            #love-link-check-modal .love-link-close {
+                cursor: pointer !important;
+                font-size: 24px !important;
+                color: #999 !important;
+                line-height: 1 !important;
+                padding: 4px 6px !important;
+                user-select: none !important;
+            }
+            #love-link-check-modal .love-link-body {
+                padding: 18px 22px 22px !important;
+                overflow: auto !important;
+                max-height: calc(100vh - 160px) !important;
+            }
+            #love-link-check-modal .love-link-ok {
+                color: #159947 !important;
+                font-size: 16px !important;
+                font-weight: 700 !important;
+                line-height: 1.8 !important;
+            }
+            #love-link-check-modal .love-link-error-list {
+                margin: 0 !important;
+                padding: 0 !important;
+                list-style: none !important;
+            }
+            #love-link-check-modal .love-link-error-list li {
+                color: #e02020 !important;
+                font-size: 14px !important;
+                font-weight: 700 !important;
+                line-height: 1.65 !important;
+                padding: 8px 0 !important;
+                border-bottom: 1px dashed #f1c7c7 !important;
+                word-break: break-all !important;
+            }
+        </style>
+        <div class="love-link-dialog">
+            <div class="love-link-header">
+                <span>请逐项人工复核以下检测结果</span>
+                <span class="love-link-close" id="love-link-check-close">×</span>
+            </div>
+            <div class="love-link-body">
+                ${hasErrors
+                    ? `<ul class="love-link-error-list">${errors.map(err => `<li>${escapeLoveHtml(err)}</li>`).join('')}</ul>`
+                    : `<div class="love-link-ok">未发现错误</div>`
+                }
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.querySelector('#love-link-check-close').onclick = close;
+    modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) close();
+    });
+}
 
 
 // === 1.1 应用名称/应用副标题批量填充：独立功能，不影响图片/视频 ===
