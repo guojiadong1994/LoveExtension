@@ -481,10 +481,10 @@ function validateLoveVivoDpLinks(values) {
     validateLoveSingleLink(click, errors, { expectedType: 'click' });
     validateLoveSingleLink(deeplink, errors, { expectedType: 'deeplink' });
 
-
     validateLoveMonitorPid(expose, errors);
     validateLoveMonitorPid(click, errors);
     validateLoveDeepLinkShareUserId(deeplink, errors);
+    validateLoveDeepLinkNestedStructure(deeplink, errors);
 
     validateLoveSameParamAcrossThree(values, errors, ['partnerId', 'partnerld', 'partnerid'], 'partnerld/partnerId');
     validateLoveSameParamAcrossThree(values, errors, ['benefit'], 'benefit');
@@ -510,18 +510,21 @@ function validateLoveSingleLink(item, errors, options = {}) {
         return;
     }
 
-    validateLoveBasicUrlSyntax(label, value, errors);
-    validateLoveChannel(label, value, errors);
+    const tree = parseLoveLinkTree(value);
+    validateLoveBasicUrlSyntax(label, value, errors, tree);
+    validateLoveChannel(label, tree, errors);
 
     if (options.expectedType === 'expose') {
-        const actionValues = getLoveMeaningfulParamValues(value, ['action']);
+        validateLoveMonitorEndpoint(label, tree, errors);
+        const actionValues = getLoveLayerMeaningfulParamValues(tree.root, ['action']);
         if (actionValues.length !== 1 || actionValues[0] !== 'expose') {
             errors.push(`【${label}】不是曝光链接，action 必须严格等于 expose，当前检测到：${formatLoveValues(actionValues)}。`);
         }
     }
 
     if (options.expectedType === 'click') {
-        const actionValues = getLoveMeaningfulParamValues(value, ['action']);
+        validateLoveMonitorEndpoint(label, tree, errors);
+        const actionValues = getLoveLayerMeaningfulParamValues(tree.root, ['action']);
         if (actionValues.length !== 1 || actionValues[0] !== 'click') {
             errors.push(`【${label}】不是点击链接，action 必须严格等于 click，当前检测到：${formatLoveValues(actionValues)}。`);
         }
@@ -529,12 +532,13 @@ function validateLoveSingleLink(item, errors, options = {}) {
 
     if (options.expectedType === 'deeplink') {
         if (!isLoveDeepLink(value)) {
-            errors.push(`【${label}】不是 DP 链接，必须能识别到 alipays:// 或 alipays://platformapi/startapp。`);
+            errors.push(`【${label}】不是 DP 链接，必须能识别到 alipays://platformapi/startapp。`);
         }
+        validateLoveDeepLinkEndpoint(label, tree, errors);
     }
 }
 
-function validateLoveBasicUrlSyntax(label, link, errors) {
+function validateLoveBasicUrlSyntax(label, link, errors, tree = null) {
     const raw = String(link || '');
 
     if (/\s/.test(raw)) {
@@ -565,7 +569,46 @@ function validateLoveBasicUrlSyntax(label, link, errors) {
         errors.push(`【${label}】链接格式异常，应该是 http/https 链接或 alipays:// DP 链接。`);
     }
 
-    validateLoveQueryStructure(label, raw, errors);
+    validateLoveParsedStructure(label, tree || parseLoveLinkTree(raw), errors);
+}
+
+function validateLoveParsedStructure(label, tree, errors) {
+    const seenMessages = new Set();
+    for (const layer of tree.layers) {
+        for (const issue of layer.issues) {
+            addUniqueLoveError(errors, seenMessages, `【${label}】${issue}`);
+        }
+
+        for (const param of layer.params) {
+            const key = param.key;
+            const keyLower = key.toLowerCase();
+            const valueForCheck = param.valueDecoded || param.valueRaw || '';
+
+            if (!key) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】${layer.displayName}第 ${param.position} 个字段的字段名为空，请检查 & 或 = 的位置。`);
+            }
+
+            if (/\s/.test(key)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】${layer.displayName}字段名存在空格：${shortLoveText(key)}。`);
+            }
+
+            if (/[?#\\/]/.test(key)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】${layer.displayName}字段名疑似异常：${shortLoveText(key)}。`);
+            }
+
+            // 普通字段里再次出现 key=value，通常是少写了 &。
+            // 但 url、ugParams、scheme 等字段本身就是“嵌套 URL/嵌套参数串”，里面出现 = 和 & 是合法的，必须递归解析，不能误报。
+            if (!isLoveNestedParamKey(keyLower) && looksLikeMergedAssignment(valueForCheck)) {
+                addUniqueLoveError(errors, seenMessages, `【${label}】${layer.displayName}字段 ${key} 的值里又出现了等号：${shortLoveText(param.rawSegment)}。这通常是少写了 &，导致后面的字段被合并进前一个字段。`);
+            }
+        }
+    }
+}
+
+function looksLikeMergedAssignment(value) {
+    const text = String(value || '');
+    if (!text) return false;
+    return /(?:^|[^%A-Za-z0-9])?[A-Za-z_][A-Za-z0-9_]{1,40}=/.test(text);
 }
 
 function isLoveSupportedUrlLike(text) {
@@ -573,72 +616,37 @@ function isLoveSupportedUrlLike(text) {
     return /^https?:\/\//i.test(trimmed) || /^alipays:\/\//i.test(trimmed) || loveDecodeLayers(trimmed).some(layer => /^alipays:\/\//i.test(layer));
 }
 
-function validateLoveQueryStructure(label, link, errors) {
-    const layers = loveDecodeLayers(link, 4);
-    const seenMessages = new Set();
+function validateLoveMonitorEndpoint(label, tree, errors) {
+    const root = tree.root;
+    if (!root || !/^https?:$/i.test(root.protocol)) {
+        errors.push(`【${label}】应该是 https/http 监测链接，当前不是标准监测链接。`);
+        return;
+    }
 
-    for (const layer of layers) {
-        const normalized = normalizeLoveUrlText(layer);
-        const queryPart = getLoveQueryPart(normalized);
-        if (!queryPart) continue;
-
-        const segments = queryPart.split('&');
-        segments.forEach((segment, index) => {
-            const position = index + 1;
-            if (segment === '') {
-                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段为空，请检查是否多写了 &。`);
-                return;
-            }
-            if (!segment.includes('=')) {
-                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段缺少等号：${shortLoveText(segment)}。`);
-                return;
-            }
-
-            const eqIndex = segment.indexOf('=');
-            const key = segment.slice(0, eqIndex).trim();
-            const val = segment.slice(eqIndex + 1);
-
-            if (!key) {
-                addUniqueLoveError(errors, seenMessages, `【${label}】第 ${position} 个字段的字段名为空，请检查 & 或 = 的位置。`);
-            }
-
-            if (/\s/.test(key)) {
-                addUniqueLoveError(errors, seenMessages, `【${label}】字段名存在空格：${shortLoveText(key)}。`);
-            }
-
-            if (/[?#\\/]/.test(key)) {
-                addUniqueLoveError(errors, seenMessages, `【${label}】字段名疑似异常：${shortLoveText(key)}。`);
-            }
-
-            // DP 链接里 ugParams=targetId=xxx 是平台合法写法，不能按“值里又出现等号”误报。
-            const keyLower = key.toLowerCase();
-            const allowNestedAssignments = keyLower === 'ugparams';
-            if (!allowNestedAssignments && /[A-Za-z_][A-Za-z0-9_]{1,40}=/.test(val)) {
-                addUniqueLoveError(errors, seenMessages, `【${label}】字段 ${key} 的值里又出现了等号：${shortLoveText(segment)}。这通常是少写了 &，导致后面的字段被合并进前一个字段。`);
-            }
-        });
+    if ((root.host || '').toLowerCase() !== 'ugapi.alipay.com' || (root.path || '').replace(/\/+$/, '') !== '/monitor') {
+        errors.push(`【${label}】监测链接域名或路径异常，应该是 https://ugapi.alipay.com/monitor。当前检测到：${root.host}${root.path}。`);
     }
 }
 
-function getLoveQueryPart(text) {
-    const qIndex = text.indexOf('?');
-    if (qIndex >= 0) {
-        return text.slice(qIndex + 1).split('#')[0];
+function validateLoveDeepLinkEndpoint(label, tree, errors) {
+    const root = tree.root;
+    if (!root || !/^alipays:$/i.test(root.protocol)) {
+        errors.push(`【${label}】应该是 alipays://platformapi/startapp 形式的 DP 链接。`);
+        return;
     }
 
-    // 处理已经被解码出来的 ugParams=targetId=...&tenantId=... 这类片段。
-    if (text.includes('&') && text.includes('=')) {
-        return text.split('#')[0];
+    const hostPath = `${root.host || ''}${root.path || ''}`.replace(/^\/+/, '').toLowerCase();
+    if (hostPath !== 'platformapi/startapp') {
+        errors.push(`【${label}】DP 链接路径异常，应该是 alipays://platformapi/startapp。当前检测到：${root.host}${root.path}。`);
     }
-
-    return '';
 }
 
-function validateLoveChannel(label, link, errors) {
-    // 渠道检测必须基于字段值严格判断，不能再用 layer.includes('vivoxxl')。
-    // 例如 requestFrom=vivoxxl2、media=vivoxxl_bak、partnerId 里含 vivoxxl，都不能算通过。
-    const requestFromValues = getLoveMeaningfulParamValues(link, ['requestFrom']);
-    const mediaValues = getLoveMeaningfulParamValues(link, ['media']);
+function validateLoveChannel(label, treeOrLink, errors) {
+    // 渠道检测必须基于字段值严格判断，不能用 includes。
+    // requestFrom=vivoxxl2、media=vivoxxl_bak、partnerId 里含 vivoxxl，都不能算通过。
+    const tree = typeof treeOrLink === 'string' ? parseLoveLinkTree(treeOrLink) : treeOrLink;
+    const requestFromValues = getLoveMeaningfulParamValuesFromTree(tree, ['requestFrom']);
+    const mediaValues = getLoveMeaningfulParamValuesFromTree(tree, ['media']);
     const channelItems = [
         ...requestFromValues.map(value => ({ key: 'requestFrom', value })),
         ...mediaValues.map(value => ({ key: 'media', value }))
@@ -668,6 +676,33 @@ function validateLoveChannel(label, link, errors) {
     }
 }
 
+function validateLoveDeepLinkNestedStructure(item, errors) {
+    if (!item.found || !item.value) return;
+    const tree = parseLoveLinkTree(item.value);
+    const root = tree.root;
+    if (!root) return;
+
+    const ugParamsValues = getLoveLayerMeaningfulParamValues(root, ['ugParams']);
+    if (ugParamsValues.length === 0) {
+        errors.push(`【${item.label}】DP 链接外层缺少 ugParams 字段。`);
+    }
+
+    const ugLayers = tree.layers.filter(layer => (layer.sourceKey || '').toLowerCase() === 'ugparams');
+    if (ugLayers.length > 0) {
+        const mediaVals = getLoveParamValuesFromLayers(ugLayers, ['media']).filter(v => !isLovePlaceholderValue(v));
+        if (mediaVals.length === 0) {
+            errors.push(`【${item.label}】ugParams 中缺少 media 字段或字段为空。`);
+        } else if (!mediaVals.includes(LOVE_LINK_CHECK_CONFIG.targetChannel) || mediaVals.some(v => v !== LOVE_LINK_CHECK_CONFIG.targetChannel)) {
+            errors.push(`【${item.label}】ugParams 中的 media 必须严格等于 ${LOVE_LINK_CHECK_CONFIG.targetChannel}，当前检测到：${formatLoveValues(mediaVals)}。`);
+        }
+    }
+
+    // 注意：DeepLink 不再强制要求外层必须有 url 字段。
+    // 有些正确 DP 链接会把 sceneCode、partnerId、shareUserId、benefit 等直接放在外层，
+    // 而不是放进 url=https%3A%2F%2Frender... 这种嵌套 H5 链接里。
+    // 如果存在 url 字段，解析器仍会把它作为嵌套层参与通用语法、渠道、一致性、shareUserId 等检查；
+    // 但不再强制要求 url 指向 render.alipay.com，也不再强制要求 url 嵌套层必须包含 benefit 或 partnerId。
+}
 
 function validateLoveHkConsistency(values, errors) {
     const items = [values.expose, values.click, values.deeplink];
@@ -705,37 +740,27 @@ function validateLoveDuplicateCriticalFields(item, errors) {
         const occurrences = getLoveParamOccurrences(item.value, group.keys);
         const values = Array.from(new Set(occurrences.map(item => item.value)));
         if (values.length > 1) {
-            const detail = occurrences.map(record => `${record.key}=${record.value}`).join('、');
+            const detail = occurrences.map(record => `${record.layerDisplayName}${record.key}=${record.value}`).join('、');
             errors.push(`【${item.label}】检测到关键字段 ${group.displayName} 重复且值不一致：${detail}。`);
         }
     }
 }
 
 function getLoveParamOccurrences(link, keys) {
+    const tree = parseLoveLinkTree(link);
     const wantedKeys = keys.map(k => k.toLowerCase());
     const records = [];
     const seen = new Set();
-    const layers = loveDecodeLayers(link, 6);
 
-    for (const layer of layers) {
-        const normalized = normalizeLoveUrlText(layer);
-        const queryPart = getLoveQueryPart(normalized);
-        if (!queryPart) continue;
+    for (const param of tree.params) {
+        if (!wantedKeys.includes(param.key.toLowerCase())) continue;
+        const value = normalizeLoveParamValue(param.valueDecoded || param.valueRaw);
+        if (isLovePlaceholderValue(value)) continue;
 
-        const segments = queryPart.split('&');
-        for (const segment of segments) {
-            const eqIndex = segment.indexOf('=');
-            if (eqIndex <= 0) continue;
-            const key = segment.slice(0, eqIndex).trim();
-            const value = normalizeLoveParamValue(segment.slice(eqIndex + 1).trim());
-            if (!wantedKeys.includes(key.toLowerCase())) continue;
-            if (isLovePlaceholderValue(value)) continue;
-
-            const uniqueKey = `${key.toLowerCase()}=${value}`;
-            if (seen.has(uniqueKey)) continue;
-            seen.add(uniqueKey);
-            records.push({ key, value });
-        }
+        const uniqueKey = `${param.layerName}|${param.key.toLowerCase()}=${value}`;
+        if (seen.has(uniqueKey)) continue;
+        seen.add(uniqueKey);
+        records.push({ key: param.key, value, layerDisplayName: param.layerDisplayName || '' });
     }
 
     return records;
@@ -743,7 +768,8 @@ function getLoveParamOccurrences(link, keys) {
 
 function validateLoveMonitorPid(item, errors) {
     if (!item.found || !item.value) return;
-    const pidValues = getLoveMeaningfulParamValues(item.value, ['pid']);
+    const tree = parseLoveLinkTree(item.value);
+    const pidValues = getLoveLayerMeaningfulParamValues(tree.root, ['pid']);
     if (!pidValues.includes(LOVE_LINK_CHECK_CONFIG.targetPid)) {
         errors.push(`【${item.label}】pid 字段应包含 ${LOVE_LINK_CHECK_CONFIG.targetPid}，当前检测到：${formatLoveValues(pidValues)}。`);
     }
@@ -783,8 +809,8 @@ function validateLoveSameParamAcrossThree(values, errors, keys, displayName) {
 function validateLoveRtaidConsistency(expose, click, errors) {
     if (!expose.found || !click.found || !expose.value || !click.value) return;
 
-    const exposeVals = getLoveMeaningfulParamValues(expose.value, ['rtaid']);
-    const clickVals = getLoveMeaningfulParamValues(click.value, ['rtaid']);
+    const exposeVals = getLoveLayerMeaningfulParamValues(parseLoveLinkTree(expose.value).root, ['rtaid']);
+    const clickVals = getLoveLayerMeaningfulParamValues(parseLoveLinkTree(click.value).root, ['rtaid']);
 
     if (exposeVals.length === 0) {
         errors.push(`【${expose.label}】缺少 rtaid 字段或字段为空。`);
@@ -807,42 +833,230 @@ function validateLoveRtaidConsistency(expose, click, errors) {
 }
 
 function isLoveDeepLink(link) {
-    return loveDecodeLayers(link, 4).some(layer => {
-        const lower = layer.toLowerCase();
-        return lower.startsWith('alipays://') || lower.includes('alipays://platformapi/startapp');
-    });
+    const root = parseLoveLinkTree(link).root;
+    if (!root) return false;
+    const hostPath = `${root.host || ''}${root.path || ''}`.replace(/^\/+/, '').toLowerCase();
+    return /^alipays:$/i.test(root.protocol) && hostPath === 'platformapi/startapp';
 }
 
 function getLoveMeaningfulParamValues(link, keys) {
-    const values = getLoveParamValues(link, keys)
+    const tree = parseLoveLinkTree(link);
+    return getLoveMeaningfulParamValuesFromTree(tree, keys);
+}
+
+function getLoveMeaningfulParamValuesFromTree(tree, keys) {
+    const values = getLoveParamValuesFromTree(tree, keys)
         .map(v => normalizeLoveParamValue(v))
         .filter(v => !isLovePlaceholderValue(v));
     return Array.from(new Set(values));
 }
 
 function getLoveParamValues(link, keys) {
+    return getLoveParamValuesFromTree(parseLoveLinkTree(link), keys);
+}
+
+function getLoveParamValuesFromTree(tree, keys) {
     const wantedKeys = keys.map(k => k.toLowerCase());
     const values = [];
-    const layers = loveDecodeLayers(link, 5);
+    for (const param of tree.params) {
+        if (wantedKeys.includes(param.key.toLowerCase())) {
+            values.push(param.valueDecoded || param.valueRaw);
+        }
+    }
+    return values;
+}
 
-    for (const layer of layers) {
-        const normalized = normalizeLoveUrlText(layer);
-        const queryPart = getLoveQueryPart(normalized);
-        if (!queryPart) continue;
+function getLoveLayerMeaningfulParamValues(layer, keys) {
+    if (!layer) return [];
+    return getLoveParamValuesFromLayers([layer], keys).filter(v => !isLovePlaceholderValue(v));
+}
 
-        const segments = queryPart.split('&');
-        for (const segment of segments) {
-            const eqIndex = segment.indexOf('=');
-            if (eqIndex <= 0) continue;
-            const key = segment.slice(0, eqIndex).trim();
-            const value = segment.slice(eqIndex + 1).trim();
-            if (wantedKeys.includes(key.toLowerCase())) {
-                values.push(value);
+function getLoveParamValuesFromLayers(layers, keys) {
+    const wantedKeys = keys.map(k => k.toLowerCase());
+    const values = [];
+    for (const layer of layers || []) {
+        for (const param of layer.params || []) {
+            if (wantedKeys.includes(param.key.toLowerCase())) {
+                values.push(normalizeLoveParamValue(param.valueDecoded || param.valueRaw));
             }
         }
     }
+    return Array.from(new Set(values));
+}
 
-    return values;
+function parseLoveLinkTree(link) {
+    const raw = normalizeLoveUrlText(String(link || '').trim());
+    const tree = { raw, root: null, layers: [], params: [] };
+    const root = parseLoveLayer(raw, 'outer', '', 0);
+    tree.root = root;
+    addLoveLayerToTree(tree, root);
+    collectLoveNestedLayers(tree, root, 0);
+    return tree;
+}
+
+function addLoveLayerToTree(tree, layer) {
+    if (!layer) return;
+    tree.layers.push(layer);
+    for (const param of layer.params) {
+        tree.params.push({
+            ...param,
+            layerName: layer.name,
+            layerDisplayName: layer.displayName
+        });
+    }
+}
+
+function collectLoveNestedLayers(tree, layer, depth) {
+    if (!layer || depth >= 4) return;
+
+    for (const param of layer.params) {
+        const keyLower = param.key.toLowerCase();
+        if (!isLoveNestedParamKey(keyLower)) continue;
+
+        const candidates = loveDecodeLayers(param.valueRaw, 4)
+            .map(text => normalizeLoveUrlText(text))
+            .filter(Boolean);
+
+        for (const candidate of candidates) {
+            if (!looksLikeNestedLoveContent(candidate)) continue;
+            const nested = parseLoveLayer(candidate, param.key, param.key, depth + 1);
+            if (!nested || loveLayerAlreadyExists(tree, nested)) continue;
+            addLoveLayerToTree(tree, nested);
+            collectLoveNestedLayers(tree, nested, depth + 1);
+        }
+    }
+}
+
+function loveLayerAlreadyExists(tree, layer) {
+    return tree.layers.some(item => item.name === layer.name && item.raw === layer.raw && item.sourceKey === layer.sourceKey);
+}
+
+function parseLoveLayer(text, name, sourceKey = '', depth = 0) {
+    const raw = normalizeLoveUrlText(String(text || '').trim());
+    const info = getLoveUrlInfo(raw);
+    const queryPart = getLoveRawQueryPart(raw);
+    const displayName = getLoveLayerDisplayName(name, depth);
+    const { params, issues } = parseLoveParamSegments(queryPart, displayName);
+    return {
+        raw,
+        name,
+        sourceKey,
+        depth,
+        displayName,
+        protocol: info.protocol,
+        host: info.host,
+        path: info.path,
+        queryPart,
+        params,
+        issues
+    };
+}
+
+function getLoveUrlInfo(text) {
+    const result = { protocol: '', host: '', path: '' };
+    const raw = String(text || '').trim();
+
+    try {
+        if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(raw)) {
+            const u = new URL(raw);
+            result.protocol = u.protocol;
+            result.host = u.hostname;
+            result.path = u.pathname || '';
+            return result;
+        }
+    } catch (e) {
+        // URL 解析失败时继续走手动解析兜底。
+    }
+
+    const match = raw.match(/^([A-Za-z][A-Za-z0-9+.-]*:)?\/\/([^/?#]+)([^?#]*)?/);
+    if (match) {
+        result.protocol = match[1] || '';
+        result.host = match[2] || '';
+        result.path = match[3] || '';
+    }
+    return result;
+}
+
+function getLoveRawQueryPart(text) {
+    const raw = String(text || '');
+    const qIndex = raw.indexOf('?');
+    if (qIndex >= 0) {
+        return raw.slice(qIndex + 1).split('#')[0];
+    }
+
+    // 已经被解码出来的参数串，例如 targetId=xxx&media=vivoxxl。
+    if (looksLikeParamString(raw)) {
+        return raw.split('#')[0];
+    }
+
+    return '';
+}
+
+function parseLoveParamSegments(queryPart, layerDisplayName = '') {
+    const params = [];
+    const issues = [];
+    if (!queryPart) return { params, issues };
+
+    const segments = String(queryPart).split('&');
+    segments.forEach((segment, index) => {
+        const position = index + 1;
+        if (segment === '') {
+            issues.push(`${layerDisplayName}第 ${position} 个字段为空，请检查是否多写了 &。`);
+            return;
+        }
+
+        const eqIndex = segment.indexOf('=');
+        if (eqIndex < 0) {
+            issues.push(`${layerDisplayName}第 ${position} 个字段缺少等号：${shortLoveText(segment)}。`);
+            return;
+        }
+
+        const key = segment.slice(0, eqIndex).trim();
+        const valueRaw = segment.slice(eqIndex + 1).trim();
+        params.push({
+            key,
+            valueRaw,
+            valueDecoded: safeLoveDecodeRepeated(valueRaw, 3),
+            rawSegment: segment,
+            position
+        });
+    });
+
+    return { params, issues };
+}
+
+function getLoveLayerDisplayName(name, depth) {
+    if (name === 'outer') return '';
+    if (name) return `【${name}嵌套层】`;
+    return depth > 0 ? `【第${depth}层】` : '';
+}
+
+function isLoveNestedParamKey(key) {
+    const k = String(key || '').toLowerCase();
+    return [
+        'url', 'scheme', 'ugparams', 'targeturl', 'redirecturl',
+        'landingurl', 'deeplink', 'deeplinkurl', 'deep_link',
+        'h5url', 'pageurl', 'jumpurl', 'linkurl'
+    ].includes(k);
+}
+
+function looksLikeNestedLoveContent(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+    if (/^https?:\/\//i.test(value) || /^alipays:\/\//i.test(value)) return true;
+    return looksLikeParamString(value);
+}
+
+function looksLikeParamString(text) {
+    const value = String(text || '').trim();
+    if (!value) return false;
+    if (!/[A-Za-z_][A-Za-z0-9_]{0,60}=/.test(value)) return false;
+    return value.includes('&') || /^[A-Za-z_][A-Za-z0-9_]{0,60}=/.test(value);
+}
+
+function safeLoveDecodeRepeated(text, maxLayers = 3) {
+    const layers = loveDecodeLayers(text, maxLayers);
+    return layers[layers.length - 1] || String(text || '');
 }
 
 function loveDecodeLayers(text, maxLayers = 4) {
