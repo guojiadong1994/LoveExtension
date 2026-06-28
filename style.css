@@ -1,18 +1,18 @@
 /* === 悬浮球容器 - 完美复刻版 === */
 #love-float-ball {
     position: fixed !important;
-    bottom: 100px !important; /* 默认位置 */
-    right: 50px !important;
-    width: 48px !important;
-    height: 48px !important;
+    bottom: 10px !important; /* 默认位置：更靠下 */
+    left: 24px !important;
+    width: 40px !important;
+    height: 40px !important;
     
     /* 核心：微灰磨砂玻璃 */
-    background: rgba(255, 255, 255, 0.8) !important; 
+    background: rgba(255, 255, 255, 0.68) !important; 
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
     
-    border: 1px solid rgba(255, 255, 255, 0.6) !important; 
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.42) !important; 
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08) !important;
     
     border-radius: 50px !important;
     z-index: 2147483647 !important;
@@ -21,8 +21,7 @@
     justify-content: center !important;
     
     cursor: default !important;
-    transition: width 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), 
-                background 0.3s, border-color 0.3s !important;
+    transition: width 0.25s ease, height 0.25s ease, border-radius 0.25s ease, background 0.2s ease !important;
     
     overflow: hidden !important;
     user-select: none !important;
@@ -30,23 +29,27 @@
 
 /* 展开状态 */
 #love-float-ball:not(.is-dragging):hover {
-    width: 230px !important; 
-    background: rgba(255, 255, 255, 0.95) !important; 
+    width: 166px !important;
+    height: 92px !important;
+    border-radius: 18px !important;
+    background: rgba(255, 255, 255, 0.92) !important; 
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15) !important;
 }
 
 /* 拖拽中状态 */
 #love-float-ball.is-dragging {
     transition: none !important; 
-    width: 230px !important; 
-    background: rgba(255, 255, 255, 0.95) !important;
+    width: 166px !important;
+    height: 92px !important;
+    border-radius: 18px !important;
+    background: rgba(255, 255, 255, 0.92) !important;
     cursor: grabbing !important;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2) !important;
 }
 
 /* 🍀 中间的四叶草图标 */
 .center-icon {
-    font-size: 24px !important;
+    font-size: 22px !important;
     line-height: 1 !important;
     position: absolute !important;
     pointer-events: none !important;
@@ -61,30 +64,31 @@
 
 /* 按钮组 */
 .btn-group {
-    display: flex !important;
-    gap: 12px !important; 
+    display: grid !important;
+    grid-template-columns: repeat(3, 38px) !important;
+    grid-template-rows: repeat(2, 38px) !important;
+    gap: 8px 10px !important; 
     opacity: 0 !important;
-    transform: translateX(20px) !important;
+    transform: translateY(8px) !important;
     transition: all 0.3s 0.1s !important; /* 延迟一点点显示，更有质感 */
     pointer-events: none !important;
     align-items: center !important;
     justify-content: center !important;
-    width: 100% !important;
-    height: 100% !important;
+    
 }
 
 #love-float-ball:hover .btn-group,
 #love-float-ball.is-dragging .btn-group {
     opacity: 1 !important;
-    transform: translateX(0) !important;
+    transform: translateY(0) !important;
     pointer-events: auto !important;
 }
 
 /* 按钮通用样式 */
 .action-btn {
-    width: 36px !important;
-    height: 36px !important;
-    border-radius: 50% !important;
+    width: 38px !important;
+    height: 38px !important;
+    border-radius: 12px !important;
     border: none !important;
     background: rgba(0, 0, 0, 0.04) !important;
     cursor: pointer !important;
@@ -92,7 +96,7 @@
     align-items: center !important;
     justify-content: center !important;
     transition: all 0.2s !important;
-    font-size: 18px !important;
+    font-size: 19px !important;
 }
 
 .action-btn:hover {
@@ -111,6 +115,12 @@
 #btn-move:active {
     cursor: grabbing !important;
 }
+
+#btn-combo { grid-column: 1 !important; grid-row: 1 !important; }
+#btn-link-check { grid-column: 2 !important; grid-row: 1 !important; }
+#btn-img { grid-column: 1 !important; grid-row: 2 !important; }
+#btn-video { grid-column: 2 !important; grid-row: 2 !important; }
+#btn-text { grid-column: 3 !important; grid-row: 2 !important; }
 
 #love-hidden-input { display: none !important; }
 
@@ -142,3 +152,4 @@
     opacity: 1 !important;
     transform: translateX(-50%) translateY(0) !important;
 }
+#btn-move { display: none !important; }

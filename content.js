@@ -2,12 +2,14 @@
 // === 视频批量上传配置：只影响视频，不影响图片 ===
 const LOVE_VIDEO_CONFIG = {
     maxFiles: 10,
-    requestCooldownMs: 2000,      // 防止 vivo 后台提示“请求频繁”
+    requestCooldownMs: 0,         // 默认不主动等待；遇到接口/限流错误时再 0.5 秒重试
     rateLimitStopMs: 15000,
     useLocalPreviewFirst: true,   // 直接从本地视频首帧生成预览图，避免页面“自动生成”频繁报错
     clearExistingBeforeUpload: true, // 视频批量上传前，先清理当前创意已有的视频和预览图
     majorToastDuration: 5200,
-    debug: true
+    debug: true,
+    uploadRetryDelayMs: 500,      // 接口返回错误后暂停 0.5 秒重试
+    uploadMaxRetries: 3
 };
 
 const LoveRuntime = {
@@ -80,6 +82,11 @@ function getRecentRateLimitMessage(windowMs = LOVE_VIDEO_CONFIG.rateLimitStopMs)
     return '';
 }
 
+function resetRecentRateLimitRecord() {
+    LoveRuntime.lastRateLimitAt = 0;
+    LoveRuntime.lastRateLimitMessage = '';
+}
+
 async function waitForRequestCooldown(label = '请求', index = '') {
     const elapsed = Date.now() - LoveRuntime.lastNetworkActionAt;
     const waitMs = Math.max(0, LOVE_VIDEO_CONFIG.requestCooldownMs - elapsed);
@@ -93,9 +100,128 @@ function noteNetworkAction() {
     LoveRuntime.lastNetworkActionAt = Date.now();
 }
 
+
+// === 0.5 一键素材+文案任务控制：只服务新增功能，不影响原有图片/视频/文案/链接检测 ===
+const LoveCombinedTask = {
+    active: false,
+    cancelled: false,
+    reason: '',
+    cancelHandlers: new Set(),
+    escInstalled: false
+};
+
+function installLoveCombinedEscStop() {
+    if (LoveCombinedTask.escInstalled) return;
+    LoveCombinedTask.escInstalled = true;
+
+    window.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' && event.code !== 'Escape' && event.keyCode !== 27) return;
+        if (!LoveCombinedTask.active) return;
+
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        cancelLoveCombinedTask('用户按下 ESC，任务已停止');
+    }, true);
+}
+
+function beginLoveCombinedTask() {
+    installLoveCombinedEscStop();
+    LoveCombinedTask.active = true;
+    LoveCombinedTask.cancelled = false;
+    LoveCombinedTask.reason = '';
+}
+
+function finishLoveCombinedTask() {
+    LoveCombinedTask.active = false;
+    LoveCombinedTask.cancelled = false;
+    LoveCombinedTask.reason = '';
+    LoveCombinedTask.cancelHandlers.clear();
+}
+
+function cancelLoveCombinedTask(reason = '任务已停止') {
+    if (!LoveCombinedTask.active || LoveCombinedTask.cancelled) return;
+
+    LoveCombinedTask.cancelled = true;
+    LoveCombinedTask.reason = reason;
+
+    for (const handler of Array.from(LoveCombinedTask.cancelHandlers)) {
+        try { handler(); } catch (e) {}
+    }
+
+    showToast('已停止', 1800, '🛑');
+}
+
+function assertLoveCombinedNotCancelled() {
+    if (!LoveCombinedTask.cancelled) return;
+    const err = new Error(LoveCombinedTask.reason || '任务已停止');
+    err.name = 'LoveCombinedCancelled';
+    throw err;
+}
+
+function isLoveCombinedCancelError(err) {
+    return err && err.name === 'LoveCombinedCancelled';
+}
+
+function combinedSleep(ms) {
+    return new Promise((resolve, reject) => {
+        if (LoveCombinedTask.cancelled) {
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            resolve();
+        }, ms);
+
+        const cancelHandler = () => {
+            clearTimeout(timer);
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+        };
+
+        LoveCombinedTask.cancelHandlers.add(cancelHandler);
+    });
+}
+
+function raceLoveCombinedCancel(promise) {
+    return new Promise((resolve, reject) => {
+        if (LoveCombinedTask.cancelled) {
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+            return;
+        }
+
+        const cancelHandler = () => {
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+        };
+
+        LoveCombinedTask.cancelHandlers.add(cancelHandler);
+
+        Promise.resolve(promise)
+            .then(value => {
+                LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+                resolve(value);
+            })
+            .catch(err => {
+                LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+                reject(err);
+            });
+    });
+}
+
 // === 1. 初始化 UI (🍀 幸运草通知版) ===
 function initFloatBall() {
     installLoveRuntimeGuards();
+    installLoveCombinedEscStop();
     if (document.getElementById('love-float-ball')) return;
 
     const ball = document.createElement('div');
@@ -128,41 +254,77 @@ function initFloatBall() {
     ball.innerHTML = `
         <style>
             #love-float-ball {
-                position: fixed !important; bottom: 30px !important; left: 30px !important;
-                width: 48px !important; height: 48px !important;
-                background: rgba(255, 255, 255, 0.95) !important;
+                position: fixed !important; bottom: 10px !important; left: 24px !important;
+                width: 40px !important; height: 40px !important;
+                background: rgba(255, 255, 255, 0.68) !important;
                 backdrop-filter: blur(10px) !important;
-                border: 1px solid rgba(0,0,0,0.1) !important;
-                box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15) !important;
+                -webkit-backdrop-filter: blur(10px) !important;
+                border: 1px solid rgba(255,255,255,0.42) !important;
+                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08) !important;
                 border-radius: 50px !important; z-index: 2147483647 !important;
                 display: flex !important; align-items: center !important; justify-content: center !important;
+                overflow: hidden !important; user-select: none !important;
+                transition: width 0.25s ease, height 0.25s ease, border-radius 0.25s ease, background 0.2s ease !important;
             }
-            #love-float-ball:hover { width: 230px !important; }
-            .center-icon { font-size: 24px; position: absolute; pointer-events: none; transition: opacity 0.2s; }
-            #love-float-ball:hover .center-icon { opacity: 0; }
-            .btn-group { display: flex; gap: 10px; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
-            #love-float-ball:hover .btn-group { opacity: 1; pointer-events: auto; }
-            .action-btn { font-size: 20px; cursor: pointer; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #f0f0f0; }
-            .action-btn:hover { background: #e0e0e0; transform: scale(1.1); }
+            #love-float-ball:hover {
+                width: 166px !important;
+                height: 92px !important;
+                border-radius: 18px !important;
+                background: rgba(255, 255, 255, 0.92) !important;
+            }
+            .center-icon { font-size: 22px !important; position: absolute !important; pointer-events: none !important; transition: opacity 0.18s !important; }
+            #love-float-ball:hover .center-icon { opacity: 0 !important; }
+            .btn-group {
+                display: grid !important;
+                grid-template-columns: repeat(3, 38px) !important;
+                grid-template-rows: repeat(2, 38px) !important;
+                gap: 8px 10px !important;
+                opacity: 0 !important;
+                transform: translateY(8px) !important;
+                transition: opacity 0.2s 0.06s ease, transform 0.2s 0.06s ease !important;
+                pointer-events: none !important;
+                align-items: center !important;
+                justify-content: center !important;
+            }
+            #love-float-ball:hover .btn-group { opacity: 1 !important; transform: translateY(0) !important; pointer-events: auto !important; }
+            .action-btn {
+                font-size: 19px !important; cursor: pointer !important; width: 38px !important; height: 38px !important;
+                display: flex !important; align-items: center !important; justify-content: center !important;
+                border-radius: 12px !important; background: rgba(65, 95, 255, 0.08) !important;
+                border: 1px solid rgba(65, 95, 255, 0.12) !important;
+                transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease !important;
+            }
+            .action-btn:hover { background: rgba(65, 95, 255, 0.16) !important; transform: translateY(-1px) scale(1.05) !important; box-shadow: 0 6px 14px rgba(65,95,255,0.16) !important; }
+            #btn-combo { grid-column: 1 !important; grid-row: 1 !important; }
+            #btn-link-check { grid-column: 2 !important; grid-row: 1 !important; }
+            #btn-img { grid-column: 1 !important; grid-row: 2 !important; }
+            #btn-video { grid-column: 2 !important; grid-row: 2 !important; }
+            #btn-text { grid-column: 3 !important; grid-row: 2 !important; }
+            #love-hidden-input { display: none !important; }
         </style>
         <div class="center-icon">🍀</div>
         <div class="btn-group">
+            <div class="action-btn" id="btn-combo" title="一键素材+文案">🧩</div>
+            <div class="action-btn" id="btn-link-check" title="检查地址">🔎</div>
             <div class="action-btn" id="btn-img" title="极速传图">🎇</div>
             <div class="action-btn" id="btn-video" title="批量视频">🎬</div>
             <div class="action-btn" id="btn-text" title="批量填充应用文案">📝</div>
-            <div class="action-btn" id="btn-link-check" title="链接检测">🔎</div>
-            <div class="action-btn" id="btn-move" title="拖动">✥</div>
         </div>
         <input type="file" id="love-hidden-input" multiple>
     `;
     document.body.appendChild(ball);
 
     const input = document.getElementById('love-hidden-input');
+    const btnCombo = document.getElementById('btn-combo');
     const btnImg = document.getElementById('btn-img');
     const btnVideo = document.getElementById('btn-video');
     const btnText = document.getElementById('btn-text');
     const btnLinkCheck = document.getElementById('btn-link-check');
-    const btnMove = document.getElementById('btn-move');
+
+    // 新增入口：素材和应用名称/应用副标题一步完成，不调用原来的单独图片/视频入口。
+    btnCombo.onclick = () => {
+        openCombinedCreativeDialog();
+    };
 
     // 图片按钮：继续使用原来的图片上传机制，不动图片逻辑
     btnImg.onclick = () => {
@@ -180,7 +342,7 @@ function initFloatBall() {
         input.click();
     };
 
-    // 文案按钮：新增应用名称/应用副标题批量填充，不影响图片和视频上传逻辑
+    // 文案按钮：应用名称/应用副标题批量填充，不影响图片和视频上传逻辑
     btnText.onclick = () => {
         openAppTextFillDialog();
     };
@@ -203,10 +365,7 @@ function initFloatBall() {
             }
         }
     };
-    setupDrag(ball, btnMove);
 }
-
-
 
 
 
@@ -1226,6 +1385,1516 @@ function showLoveLinkCheckModal(errors) {
 }
 
 
+
+// === 1.0 一键素材+应用文案：新增功能，独立于原有图片/视频/文案/链接检测入口 ===
+function openCombinedCreativeDialog() {
+    const existing = document.getElementById('love-combined-modal');
+    if (existing) existing.remove();
+
+    const context = detectCurrentAdCreativeContext();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'love-combined-modal';
+    const mediaLabel = context.mediaKind === 'video' ? '视频' : (context.mediaKind === 'image' ? '图片' : '图片/视频');
+    const accept = context.mediaKind === 'video'
+        ? 'video/*,.mp4'
+        : (context.mediaKind === 'image' ? 'image/*,.jpg,.jpeg,.png,.gif' : 'image/*,video/*,.jpg,.jpeg,.png,.gif,.mp4');
+
+    overlay.innerHTML = `
+        <style>
+            #love-combined-modal {
+                position: fixed !important;
+                inset: 0 !important;
+                z-index: 2147483647 !important;
+                background: rgba(0, 0, 0, 0.38) !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+            }
+            #love-combined-modal .love-combined-dialog {
+                width: 460px !important;
+                background: #fff !important;
+                border-radius: 14px !important;
+                box-shadow: 0 14px 42px rgba(0,0,0,0.24) !important;
+                overflow: hidden !important;
+            }
+            #love-combined-modal .love-combined-header {
+                padding: 16px 20px !important;
+                border-bottom: 1px solid #eef0f5 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                color: #222 !important;
+                font-size: 16px !important;
+                font-weight: 700 !important;
+            }
+            #love-combined-modal .love-combined-close {
+                cursor: pointer !important;
+                font-size: 22px !important;
+                color: #999 !important;
+                line-height: 1 !important;
+                user-select: none !important;
+            }
+            #love-combined-modal .love-combined-body { padding: 18px 20px 8px !important; }
+            #love-combined-modal .love-combined-context {
+                margin-bottom: 14px !important;
+                padding: 10px 12px !important;
+                border-radius: 10px !important;
+                background: rgba(65,95,255,0.07) !important;
+                color: #415fff !important;
+                font-size: 12px !important;
+                line-height: 1.6 !important;
+            }
+            #love-combined-modal .love-combined-field { margin-bottom: 14px !important; }
+            #love-combined-modal label {
+                display: block !important;
+                margin-bottom: 8px !important;
+                font-size: 13px !important;
+                color: #333 !important;
+                font-weight: 600 !important;
+            }
+            #love-combined-modal input[type="text"], #love-combined-modal input[type="file"] {
+                width: 100% !important;
+                box-sizing: border-box !important;
+                min-height: 38px !important;
+                border: 1px solid #dcdfe6 !important;
+                border-radius: 8px !important;
+                padding: 8px 12px !important;
+                font-size: 14px !important;
+                outline: none !important;
+                background: #fff !important;
+            }
+            #love-combined-modal input[type="text"]:focus {
+                border-color: #415fff !important;
+                box-shadow: 0 0 0 2px rgba(65,95,255,0.12) !important;
+            }
+            #love-combined-modal .love-combined-tip {
+                color: #888 !important;
+                font-size: 12px !important;
+                line-height: 1.55 !important;
+                margin-top: 2px !important;
+            }
+            #love-combined-modal .love-combined-footer {
+                padding: 14px 20px 18px !important;
+                display: flex !important;
+                justify-content: flex-end !important;
+                gap: 10px !important;
+            }
+            #love-combined-modal button {
+                min-width: 88px !important;
+                height: 34px !important;
+                border-radius: 18px !important;
+                border: 1px solid #dcdfe6 !important;
+                background: #fff !important;
+                cursor: pointer !important;
+                font-size: 14px !important;
+            }
+            #love-combined-modal .love-combined-confirm {
+                background: #415fff !important;
+                color: white !important;
+                border-color: #415fff !important;
+            }
+        </style>
+        <div class="love-combined-dialog">
+            <div class="love-combined-header">
+                <span>一键处理素材和标题</span>
+                <span class="love-combined-close" id="love-combined-close">×</span>
+            </div>
+            <div class="love-combined-body">
+                <div class="love-combined-field">
+                    <label for="love-combined-file">选择${mediaLabel}素材</label>
+                    <input id="love-combined-file" type="file" accept="${accept}" multiple>
+                    <div class="love-combined-tip">可选。选择素材时会按创意 1、创意 2、创意 3……依次上传；不选择素材时只处理标题。</div>
+                </div>
+                <div class="love-combined-field">
+                    <label for="love-combined-app-name">标题 / 名称</label>
+                    <input id="love-combined-app-name" type="text" placeholder="请输入应用名称或创意标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
+                </div>
+                <div class="love-combined-field">
+                    <label for="love-combined-app-subtitle">副标题</label>
+                    <input id="love-combined-app-subtitle" type="text" placeholder="请输入应用副标题或创意副标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
+                </div>
+                <div class="love-combined-tip">可以只更新素材、只更新标题，或素材和标题一起更新；新建广告空白状态下建议素材和标题一起填写。运行中按 ESC 可立即停止。</div>
+            </div>
+            <div class="love-combined-footer">
+                <button type="button" id="love-combined-cancel">取消</button>
+                <button type="button" class="love-combined-confirm" id="love-combined-confirm">开始运行</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.querySelector('#love-combined-close').onclick = close;
+    overlay.querySelector('#love-combined-cancel').onclick = close;
+    overlay.addEventListener('mousedown', (e) => {
+        if (e.target === overlay) close();
+    });
+
+    const fileInput = overlay.querySelector('#love-combined-file');
+    const appNameInput = overlay.querySelector('#love-combined-app-name');
+    const appSubtitleInput = overlay.querySelector('#love-combined-app-subtitle');
+    const confirmBtn = overlay.querySelector('#love-combined-confirm');
+
+    disableLoveTextInputHistory([appNameInput, appSubtitleInput]);
+
+    confirmBtn.onclick = async () => {
+        const files = Array.from(fileInput.files || []).slice(0, LOVE_VIDEO_CONFIG.maxFiles);
+        const appName = appNameInput.value.trim();
+        const appSubtitle = appSubtitleInput.value.trim();
+        const hasMedia = files.length > 0;
+        const hasText = !!(appName || appSubtitle);
+
+        if (!hasMedia && !hasText) {
+            showToast('请至少选择素材，或填写标题/副标题', 4500, '⚠️');
+            fileInput.focus();
+            return;
+        }
+
+        const inferredMediaKind = hasMedia ? inferCombinedMediaKindFromFiles(files, context.mediaKind) : '';
+        if (hasMedia && !inferredMediaKind) {
+            showToast('暂不支持图片和视频混合处理，请一次只选择图片或只选择视频', 5200, '⚠️');
+            return;
+        }
+
+        const blankNewAd = isLikelyBlankNewAdForCombined(context);
+        if (blankNewAd && (!hasMedia || !appName || !appSubtitle)) {
+            showToast('当前看起来是新建空白广告，请同时选择素材并填写标题/名称和副标题', 6500, '⚠️');
+            if (!hasMedia) fileInput.focus();
+            else (!appName ? appNameInput : appSubtitleInput).focus();
+            return;
+        }
+
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '运行中...';
+        close();
+
+        await startCombinedCreativeAutomation({
+            files,
+            appName,
+            appSubtitle,
+            hasMedia,
+            hasText,
+            targetCount: hasMedia ? files.length : Math.max(1, getCombinedCreativeIndices().length || 1),
+            mediaKind: inferredMediaKind || context.mediaKind,
+            displayType: context.displayType,
+            creativeType: context.creativeType
+        });
+    };
+
+    setTimeout(() => fileInput.focus(), 50);
+}
+
+function detectCurrentAdCreativeContext() {
+    const displayType = detectSelectedOptionText(['开屏', 'Banner', '插屏', '原生', '激励互动']);
+    const creativeType = detectSelectedOptionText(['竖版大图', '横版大图', '竖版视频', '横版视频', '小图', '组图', '无图']);
+
+    let mediaKind = '';
+    if (creativeType.includes('视频')) {
+        mediaKind = 'video';
+    } else if (creativeType.includes('大图') || creativeType.includes('小图') || creativeType.includes('组图')) {
+        mediaKind = 'image';
+    } else {
+        const areas = identifyVideoUploadAreas(1, { silent: true });
+        const imageInput = identifyUploadInputs().image;
+        if (areas.videoInput) mediaKind = 'video';
+        else if (imageInput) mediaKind = 'image';
+    }
+
+    return { displayType, creativeType, mediaKind };
+}
+
+
+function inferCombinedMediaKindFromFiles(files, fallbackKind = '') {
+    const kinds = new Set();
+    for (const file of files || []) {
+        const type = (file.type || '').toLowerCase();
+        const name = (file.name || '').toLowerCase();
+        if (type.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(name)) {
+            kinds.add('image');
+        } else if (type.startsWith('video/') || /\.(mp4|mov|m4v|avi|webm|mkv)$/i.test(name)) {
+            kinds.add('video');
+        }
+    }
+    if (kinds.size === 1) return Array.from(kinds)[0];
+    if (kinds.size > 1) return '';
+    return fallbackKind === 'image' || fallbackKind === 'video' ? fallbackKind : '';
+}
+
+function isLikelyBlankNewAdForCombined(context = {}) {
+    const creativeIndices = getCombinedCreativeIndices();
+    if (creativeIndices.length > 0) return false;
+
+    const bodyText = normalizeText(document.body.innerText || document.body.textContent || '');
+    const hasZeroCount = /创意个数\s*0\s*\/\s*10/.test(bodyText) || bodyText.includes('创意个数0/10');
+    const hasEmptyAddHint = (bodyText.includes('暂无') && bodyText.includes('立即添加')) || bodyText.includes('暂无无图') || bodyText.includes('暂无竖版大图') || bodyText.includes('暂无横版大图') || bodyText.includes('暂无竖版视频') || bodyText.includes('暂无横版视频');
+    const hasAddButton = !!findCombinedAddCreativeButton();
+    const hasVisibleFileInput = Array.from(document.querySelectorAll('input[type="file"]')).some(input => isElementVisible(input) || input.closest('.ep-upload, .el-upload'));
+
+    if (hasZeroCount || hasEmptyAddHint) return true;
+    return hasAddButton && !hasVisibleFileInput;
+}
+
+function detectSelectedOptionText(optionTexts) {
+    const candidates = [];
+    const all = Array.from(document.querySelectorAll('button, span, div, label, li, [role="tab"], [role="button"], [aria-selected]'));
+
+    for (const el of all) {
+        if (!isElementVisible(el)) continue;
+        const rawText = normalizeText(el.innerText || el.textContent || '');
+        if (!rawText) continue;
+
+        const matchedOption = optionTexts.find(option => {
+            const opt = normalizeText(option);
+            const simplified = stripLoveOptionCount(rawText);
+            return simplified === opt || simplified.startsWith(opt) || rawText.includes(opt);
+        });
+        if (!matchedOption) continue;
+
+        const score = getLoveSelectedOptionScore(el);
+        if (score > 0) {
+            const rect = el.getBoundingClientRect();
+            candidates.push({
+                el,
+                text: matchedOption,
+                score,
+                area: Math.max(1, rect.width * rect.height),
+                rawText
+            });
+        }
+    }
+
+    candidates.sort((a, b) => (b.score - a.score) || (a.area - b.area));
+    return candidates[0] ? candidates[0].text : '';
+}
+
+function stripLoveOptionCount(text) {
+    return normalizeText(text || '')
+        .replace(/[（(]\s*\d+\s*[）)]/g, '')
+        .replace(/\s+/g, '');
+}
+
+function getLoveSelectedOptionScore(el) {
+    let score = 0;
+    const attrs = [
+        el.getAttribute('aria-selected'),
+        el.getAttribute('aria-pressed'),
+        el.getAttribute('aria-checked')
+    ].join(' ');
+    if (attrs.includes('true')) score += 6;
+
+    const checkedInput = (el.matches && el.matches('input[type="radio"], input[type="checkbox"]'))
+        ? el
+        : (el.querySelector && el.querySelector('input[type="radio"]:checked, input[type="checkbox"]:checked'));
+    if (checkedInput && checkedInput.checked) score += 8;
+
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+        const cls = getElementClassText(node).toLowerCase();
+        if (cls.includes('is-active') || cls.includes('active') || cls.includes('selected') || cls.includes('checked')) score += 5;
+        if (cls.includes('disabled')) score -= 2;
+        if (node !== el && score > 0) break;
+    }
+
+    try {
+        const style = window.getComputedStyle(el);
+        const colorText = `${style.color} ${style.borderColor} ${style.backgroundColor} ${style.boxShadow}`;
+        if (colorText.includes('65, 95, 255') || colorText.includes('45, 96, 255') || colorText.includes('48, 91, 255') || colorText.includes('64, 105, 255')) {
+            score += 3;
+        }
+        if (style.fontWeight && Number(style.fontWeight) >= 600) score += 1;
+    } catch (e) {}
+
+    return score;
+}
+
+async function waitForCombinedRequestCooldown(label = '请求', index = '') {
+    const elapsed = Date.now() - LoveRuntime.lastNetworkActionAt;
+    const waitMs = Math.max(0, LOVE_VIDEO_CONFIG.requestCooldownMs - elapsed);
+    if (waitMs > 0) {
+        loveDebug(`[LoveToolbox] 一键流程：创意${index} ${label} 前等待 ${waitMs}ms，避免请求频繁`);
+        await combinedSleep(waitMs);
+    }
+    assertLoveCombinedNotCancelled();
+}
+
+async function waitForCreativeRootReadyForCombinedTextFill(index, timeoutMs = 5000) {
+    const start = Date.now();
+
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        const root = getActiveCreativeRoot(index) || getVisibleCreativeRootForTextFill();
+        if (root && isElementVisible(root)) return root;
+        await combinedSleep(120);
+    }
+
+    assertLoveCombinedNotCancelled();
+    return getActiveCreativeRoot(index) || getVisibleCreativeRootForTextFill();
+}
+
+async function startCombinedCreativeAutomation(options) {
+    installLoveRuntimeGuards();
+    beginLoveCombinedTask();
+
+    const ball = document.getElementById('love-float-ball');
+    if (ball) ball.style.background = '#e6f7ff';
+    clearLoveToasts();
+
+    try {
+        assertLoveCombinedNotCancelled();
+
+        const hasMedia = !!options.hasMedia && Array.isArray(options.files) && options.files.length > 0;
+        const hasText = !!options.hasText && !!(options.appName || options.appSubtitle);
+        const mediaCount = hasMedia ? options.files.length : 0;
+        const textTargetCount = hasMedia ? mediaCount : Math.max(1, options.targetCount || getCombinedCreativeIndices().length || 1);
+
+        if (hasMedia) {
+            await ensureCombinedCreativeCount(mediaCount);
+
+            if (options.mediaKind === 'video') {
+                await runCombinedVideoFlow(options);
+            } else if (options.mediaKind === 'image') {
+                await runCombinedImageFlow(options);
+            } else {
+                throw new Error('未能识别素材类型，请先选择图片或视频素材');
+            }
+        }
+
+        if (hasText) {
+            await combinedFillUnifiedTextForTargetCreatives(options.appName, options.appSubtitle, textTargetCount);
+        }
+
+        assertLoveCombinedNotCancelled();
+        showToast('完成了', 1500, '✅');
+    } catch (err) {
+        if (isLoveCombinedCancelError(err)) {
+            console.warn('[LoveToolbox] 一键素材+文案任务已停止：', err.message);
+        } else {
+            console.error('[LoveToolbox] 一键素材+文案失败：', err);
+            showToast(`一键任务失败：${err.message || '请查看控制台'}`, 6500, '⚠️');
+        }
+    } finally {
+        if (ball) ball.style.background = '';
+        finishLoveCombinedTask();
+    }
+}
+
+async function ensureCombinedCreativeCount(requiredCount) {
+    if (requiredCount > LOVE_VIDEO_CONFIG.maxFiles) {
+        throw new Error(`最多只能一次处理 ${LOVE_VIDEO_CONFIG.maxFiles} 个创意`);
+    }
+
+    let count = getCombinedCreativeIndices().length;
+    if (count >= requiredCount) return true;
+
+    for (let target = count + 1; target <= requiredCount; target++) {
+        assertLoveCombinedNotCancelled();
+        const addBtn = findCombinedAddCreativeButton();
+        if (!addBtn) {
+            throw new Error(`当前只有 ${getCombinedCreativeIndices().length} 个创意，未找到“立即添加+ / 添加创意”按钮`);
+        }
+
+        console.log(`[LoveToolbox] 新增创意到 ${target} 个：`, addBtn);
+        clickCombinedSafeNonSubmit(addBtn, '添加创意');
+        await waitCombinedCreativeCountAtLeast(target, 8000);
+        count = getCombinedCreativeIndices().length;
+        if (count < target) {
+            throw new Error(`添加创意${target}失败，请手动检查页面`);
+        }
+        await combinedSleep(300);
+    }
+
+    return true;
+}
+
+function getCombinedCreativeIndices() {
+    const nodes = Array.from(document.querySelectorAll('.ep-tabs__item, .el-tabs__item, [role="tab"], button, span, div'));
+    const set = new Set();
+
+    for (const node of nodes) {
+        if (!isElementVisible(node)) continue;
+        const text = normalizeText(node.innerText || node.textContent || '');
+        const match = text.match(/^创意(\d+)$/);
+        if (match) set.add(Number(match[1]));
+    }
+
+    return Array.from(set).filter(n => n >= 1 && n <= 10).sort((a, b) => a - b);
+}
+
+function findCombinedAddCreativeButton() {
+    const dangerWords = ['提交', '保存', '发布', '送审', '上架', '完成', '确认提交', '确认保存', '确认发布'];
+    const nodes = Array.from(document.querySelectorAll('button, a, span, div, [role="button"]'))
+        .filter(el => isElementVisible(el))
+        .map(el => {
+            const text = normalizeText(el.innerText || el.textContent || '');
+            const clickable = el.closest('button, a, [role="button"], .ep-button, .el-button') || el;
+            const rect = clickable.getBoundingClientRect();
+            return { el, clickable, text, area: Math.max(1, rect.width * rect.height) };
+        })
+        .filter(item => item.text && !dangerWords.some(word => item.text.includes(word)))
+        .filter(item => item.text.includes('立即添加') || item.text.includes('添加创意') || item.text === '添加+' || item.text === '+添加');
+
+    nodes.sort((a, b) => a.area - b.area);
+    return nodes[0] ? nodes[0].clickable : null;
+}
+
+async function waitCombinedCreativeCountAtLeast(targetCount, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        if (getCombinedCreativeIndices().length >= targetCount) return true;
+        await combinedSleep(250);
+    }
+    return false;
+}
+
+function clickCombinedSafeNonSubmit(element, actionName = '') {
+    if (!element) return false;
+    const clickable = element.closest('button, a, [role="button"], .ep-button, .el-button') || element;
+    const text = normalizeText((clickable.innerText || clickable.textContent || '') + actionName);
+    const dangerWords = ['提交', '保存', '发布', '送审', '上架', '完成', '下一步', '确认提交', '确认保存', '确认发布', 'Submit', 'Save', 'Publish'];
+    if (dangerWords.some(word => text.includes(word))) {
+        throw new Error(`已阻止危险点击：${text}`);
+    }
+    return forceClickElement(clickable);
+}
+
+async function runCombinedImageFlow(options) {
+    for (let i = 0; i < options.files.length; i++) {
+        assertLoveCombinedNotCancelled();
+        const index = i + 1;
+        const file = options.files[i];
+
+        console.log(`[LoveToolbox] 一键图片流程：开始处理创意${index}`, file.name, file.size);
+        const tabSuccess = await switchToCreativeTabCombined(index);
+        if (!tabSuccess) throw new Error(`没找到创意${index}`);
+
+        await maybeSelectCombinedVerticalImageSpec(index, options);
+        await combinedSleep(60);
+
+        let imageInput = await waitCombinedImageInput(index, 8000);
+        if (!imageInput) throw new Error(`创意${index} 没找到图片上传框`);
+
+        // 只在真正进入上传前清理一次“页面原本就存在”的旧图。
+        // 之前的问题是：第一次上传后如果平台裁剪/回显稍慢，重试逻辑会把刚刚上传的图片误判成旧图，
+        // 然后删除、重传、再删除，造成创意里反复失败。这里把“上传前旧图清理”和“上传后重试确认”彻底分开。
+        imageInput = await prepareCombinedImageInputForUpload(index, imageInput);
+        if (!imageInput) throw new Error(`创意${index} 旧图片未能删除，已停止`);
+
+        const uploadOk = await retryCombinedUploadStep(`创意${index} 图片上传`, async (attempt) => {
+            assertLoveCombinedNotCancelled();
+
+            // 重试时先看当前创意是否已经有上传结果。只要已经回显/有删除或重新上传状态，
+            // 就认为这次图片已经进入平台组件，不再删除它，也不再重复塞同一个文件。
+            if (attempt > 1 && combinedImageFieldHasUploadedMedia(index, imageInput)) {
+                console.log(`[LoveToolbox] 创意${index} 图片已经回显，停止重试上传，避免误删刚上传的图片`);
+                return true;
+            }
+
+            let latestInput = identifyUploadInputs().image || findImageInputInCreativeRoot(index) || imageInput;
+            if (!latestInput) {
+                if (combinedImageFieldHasUploadedMedia(index, imageInput)) return true;
+                throw new Error(`创意${index} 没找到图片上传框`);
+            }
+
+            const uploadContainer = getImageFieldContainer(latestInput, index) || latestInput.closest('.ep-upload, .el-upload') || latestInput.parentElement;
+            const initialCount = uploadContainer ? uploadContainer.querySelectorAll('*').length : 0;
+            await strongUploadCombinedImage(latestInput, file);
+            return await waitForCombinedImageUploadSettled(uploadContainer, initialCount, index, 15000);
+        });
+
+        if (!uploadOk) throw new Error(`创意${index} 图片未确认上传成功`);
+        await combinedSleep(40);
+    }
+}
+
+async function runCombinedVideoFlow(options) {
+    for (let i = 0; i < options.files.length; i++) {
+        assertLoveCombinedNotCancelled();
+        const index = i + 1;
+        const file = options.files[i];
+
+        console.log(`[LoveToolbox] 一键视频流程：开始处理创意${index}`, file.name, file.size);
+        const tabSuccess = await switchToCreativeTabCombined(index);
+        if (!tabSuccess) throw new Error(`没找到创意${index}`);
+
+        let areas = await waitCombinedVideoAreasReady(index, 10000);
+        if (!areas.videoInput) throw new Error(`创意${index} 没找到视频上传框`);
+
+        const cleared = await clearCombinedExistingVideoAndPreview(index, areas);
+        if (!cleared) throw new Error(`创意${index} 旧视频/预览图未能删除，已停止`);
+
+        const videoOk = await retryCombinedUploadStep(`创意${index} 视频上传`, async (attempt) => {
+            const latestAreas = await waitCombinedVideoAreasReady(index, 10000);
+            if (!latestAreas.videoInput) throw new Error(`创意${index} 清理后找不到视频上传框`);
+            if (attempt > 1) {
+                // 上一轮可能其实已经上传成功，只是页面还残留“请先上传视频”等旧校验提示。
+                // 这种情况下不能把刚上传的新视频当旧视频删除，否则会在创意1反复删、反复传。
+                if (videoFieldHasUploadedMedia(index, latestAreas.videoInput)) {
+                    console.log(`[LoveToolbox] 一键流程：创意${index} 视频已回显，停止重试上传，避免误删刚上传的视频`);
+                    clearUploadFieldVisibleErrors(latestAreas.videoInput);
+                    return true;
+                }
+                await clearCombinedExistingMediaField(index, 'video', latestAreas.videoInput);
+            }
+            const refreshedAreas = await waitCombinedVideoAreasReady(index, 10000);
+            const videoInput = refreshedAreas.videoInput || latestAreas.videoInput;
+            const snapshot = makeVideoUploadSnapshot(videoInput, index);
+            await waitForCombinedRequestCooldown('视频上传', index);
+            await strongUploadCombinedVideo(videoInput, file);
+            noteNetworkAction();
+            const uploadDone = await waitForCombinedVideoUploadComplete(index, snapshot, 120000);
+            const rateLimitAfterVideo = getRecentRateLimitMessage();
+            const visibleError = getVisibleHardVideoUploadErrorMessage();
+            return uploadDone && !rateLimitAfterVideo && !visibleError;
+        });
+        if (!videoOk) throw new Error(`创意${index} 视频未确认上传成功`);
+
+        if (shouldSkipCombinedPreviewForCurrentContext(options, index)) {
+            console.log(`[LoveToolbox] 一键视频流程：当前为激励互动/竖版视频，创意${index} 跳过预览图处理`);
+            continue;
+        }
+
+        const previewOk = await retryCombinedUploadStep(`创意${index} 第三帧预览图上传`, async (attempt) => {
+            const previewAreas = await waitCombinedPreviewAreaReady(index, 15000);
+
+            // 激励互动 + 竖版视频是平台特殊结构：页面虽然有“预览图”字段，
+            // 但该字段没有自动生成逻辑，强行上传第三帧会触发表单报错。
+            // 因此在等待预览图区域之后再兜底判断一次，避免页面动态切换后误处理。
+            if (shouldSkipCombinedPreviewForCurrentContext(options, index, previewAreas)) {
+                console.log(`[LoveToolbox] 一键视频流程：创意${index} 识别为无需预览图场景，跳过第三帧预览图`);
+                return true;
+            }
+
+            if (!previewAreas.previewInput) throw new Error(`创意${index} 没找到预览图上传区域`);
+            // v9 加速：旧预览图放到这里再清理；如果没有旧预览图会立即返回。
+            await clearCombinedExistingMediaField(index, 'preview', previewAreas.previewInput);
+            const refreshedPreviewAreas = await waitCombinedPreviewAreaReady(index, 15000);
+            const filled = await fillCombinedPreviewByThirdFrame(refreshedPreviewAreas.previewInput || previewAreas.previewInput, index, file);
+            const rateLimitAfterPreview = getRecentRateLimitMessage();
+            const visibleError = getVisibleHardVideoUploadErrorMessage();
+            return filled && !rateLimitAfterPreview && !visibleError;
+        });
+        if (!previewOk) throw new Error(`创意${index} 第三帧预览图未确认成功`);
+    }
+}
+
+async function switchToCreativeTabCombined(index) {
+    assertLoveCombinedNotCancelled();
+    const tabs = Array.from(document.querySelectorAll('.ep-tabs__item, .el-tabs__item, [role="tab"]'));
+    const targetTab = tabs.find(el => normalizeText(el.innerText || el.textContent || '') === `创意${index}`);
+    if (!targetTab) return false;
+    clickCombinedSafeNonSubmit(targetTab, `切换创意${index}`);
+    await combinedSleep(220);
+    return true;
+}
+
+async function waitCombinedImageInput(index, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        let input = identifyUploadInputs().image;
+        if (!input) input = findImageInputInCreativeRoot(index);
+        if (input && input.isConnected) return input;
+        await combinedSleep(200);
+    }
+    return identifyUploadInputs().image || findImageInputInCreativeRoot(index);
+}
+
+function findImageInputInCreativeRoot(index) {
+    const root = getActiveCreativeRoot(index) || document.body;
+    const inputs = Array.from(root.querySelectorAll('.ep-upload__input, .el-upload__input, input[type="file"]'));
+    return inputs.find(input => {
+        const accept = (input.getAttribute('accept') || '').toLowerCase();
+        const text = getNearbyText(input, 10);
+        if (text.includes('头像') || text.includes('Logo') || text.includes('logo') || text.includes('视频') || text.includes('预览图') || text.includes('封面')) return false;
+        return accept.includes('image') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('png') || text.includes('图片') || text.includes('素材');
+    }) || null;
+}
+
+async function maybeSelectCombinedVerticalImageSpec(index, options) {
+    const display = normalizeText(options.displayType || detectSelectedOptionText(['开屏', 'Banner', '插屏', '原生', '激励互动']) || '');
+    const creative = normalizeText(options.creativeType || detectSelectedOptionText(['竖版大图', '横版大图', '竖版视频', '横版视频', '小图', '组图', '无图']) || '');
+    const need1920 = (display.includes('插屏') || display.includes('开屏')) && creative.includes('竖版大图');
+    if (!need1920) return false;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        assertLoveCombinedNotCancelled();
+        const root = getActiveCreativeRoot(index) || document.body;
+        const target = findCombinedCreativeSpecOption(root, ['1080*1920', '1080×1920']);
+
+        if (!target) {
+            console.warn(`[LoveToolbox] 创意${index} 第${attempt}次未找到 1080*1920 规格选项，继续重试`);
+            await combinedSleep(180);
+            continue;
+        }
+
+        const currentText = normalizeDimensionText(target.innerText || target.textContent || '');
+        if (currentText.includes('1080*1920') && getLoveSelectedOptionScore(target) > 0) {
+            console.log(`[LoveToolbox] 创意${index} 创意规格已经是 1080*1920`);
+            return true;
+        }
+
+        console.log(`[LoveToolbox] 创意${index} 自动切换创意规格到 1080*1920`, target);
+        selectCombinedCreativeSpecRadioOption(target);
+        await combinedSleep(260);
+
+        const verifyRoot = getActiveCreativeRoot(index) || document.body;
+        const verified = findCombinedCreativeSpecOption(verifyRoot, ['1080*1920', '1080×1920']);
+        if (verified && getLoveSelectedOptionScore(verified) > 0) return true;
+    }
+
+    throw new Error(`当前是${display}/${creative}，但未能自动切换创意规格到 1080*1920，请检查页面结构`);
+}
+
+function findCombinedCreativeSpecOption(scope, texts) {
+    const normalizedTargets = texts.map(normalizeDimensionText);
+    const specRows = findCombinedSpecRows(scope || document.body);
+    const searchScopes = specRows.length ? specRows : [scope || document.body, document.body];
+
+    const candidates = [];
+    for (const searchScope of searchScopes) {
+        const nodes = Array.from(searchScope.querySelectorAll('button, span, div, label, [role="button"], [aria-selected]'))
+            .filter(isElementVisible)
+            .map(el => ({
+                el,
+                text: normalizeDimensionText(el.innerText || el.textContent || ''),
+                clickable: el.closest('button, [role="button"], label, .ep-radio-button, .el-radio-button, .ep-segmented__item, .el-segmented__item') || el
+            }))
+            .filter(item => normalizedTargets.some(target => item.text === target || item.text.includes(target)));
+
+        for (const item of nodes) {
+            const rect = item.clickable.getBoundingClientRect();
+            const area = Math.max(1, rect.width * rect.height);
+            if (area > 60000) continue;
+            candidates.push({ ...item, area, score: getLoveSelectedOptionScore(item.clickable) });
+        }
+        if (candidates.length) break;
+    }
+
+    candidates.sort((a, b) => (a.area - b.area) || (b.score - a.score));
+    return candidates[0]?.clickable || null;
+}
+
+function selectCombinedCreativeSpecRadioOption(optionEl) {
+    if (!optionEl) return false;
+
+    // Element Plus 的规格按钮实际是 label.ep-radio-button 包着 input[type=radio] 和 span.inner。
+    // 重要：这里不能复用 forceClickElement。forceClickElement 为了删除上传图标会临时写入 display/opacity 等 inline style，
+    // 用在规格 radio 上会破坏 Element Plus 原本的 border-radius / 相邻边框折叠，造成 1080*1920 选中后视觉错位。
+    const label = optionEl.closest('label.ep-radio-button, label.el-radio-button, label') || optionEl;
+    const input = label.querySelector && label.querySelector('input[type="radio"]');
+    const inner = label.querySelector && (label.querySelector('.ep-radio-button__inner') || label.querySelector('.el-radio-button__inner') || label.querySelector('span'));
+
+    cleanupCombinedRadioButtonInlineStyles(label);
+
+    // 按人工点击的路径触发，但不修改任何布局样式。
+    if (inner) clickElementWithoutLayoutMutation(inner);
+    clickElementWithoutLayoutMutation(label);
+
+    if (input) {
+        try {
+            const checkedSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked')?.set;
+            if (checkedSetter) checkedSetter.call(input, true);
+            else input.checked = true;
+        } catch (e) {
+            try { input.checked = true; } catch (ignore) {}
+        }
+
+        ['input', 'change'].forEach(type => {
+            input.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+        });
+
+        try { input.click(); } catch (e) {}
+        clickElementWithoutLayoutMutation(label);
+        cleanupCombinedRadioButtonInlineStyles(label);
+    }
+
+    return true;
+}
+
+function cleanupCombinedRadioButtonInlineStyles(label) {
+    if (!label || !label.querySelectorAll) return;
+    const nodes = [
+        label,
+        ...Array.from(label.querySelectorAll('.ep-radio-button__inner, .el-radio-button__inner, span, input[type="radio"]'))
+    ];
+    nodes.forEach(node => {
+        if (!node || !node.style) return;
+        ['display', 'opacity', 'visibility', 'pointer-events', 'z-index'].forEach(prop => {
+            try { node.style.removeProperty(prop); } catch (e) {}
+        });
+    });
+}
+
+function clickElementWithoutLayoutMutation(element) {
+    if (!element || !element.dispatchEvent) return false;
+    const rect = element.getBoundingClientRect();
+    const clientX = rect.left + Math.max(1, rect.width / 2 || 1);
+    const clientY = rect.top + Math.max(1, rect.height / 2 || 1);
+
+    ['pointerenter', 'mouseenter', 'pointerover', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+        element.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX,
+            clientY
+        }));
+    });
+
+    if (typeof element.click === 'function') {
+        try { element.click(); } catch (e) {}
+    }
+    return true;
+}
+
+function findCombinedSpecRows(scope) {
+    const all = Array.from((scope || document).querySelectorAll('div, section, form, .ep-form-item, .el-form-item'))
+        .filter(isElementVisible)
+        .filter(el => {
+            const text = normalizeDimensionText(el.innerText || el.textContent || '');
+            const rect = el.getBoundingClientRect();
+            return text.includes('创意规格') && (text.includes('1080*1920') || text.includes('1080*1880') || text.includes('780*800')) && rect.width > 80 && rect.height < 180;
+        });
+
+    all.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return (ar.width * ar.height) - (br.width * br.height);
+    });
+    return all;
+}
+
+function findCombinedTextOption(scope, texts) {
+    const normalizedTargets = texts.map(normalizeDimensionText);
+    const nodes = Array.from((scope || document).querySelectorAll('button, span, div, label, [role="button"], [aria-selected]'))
+        .filter(isElementVisible)
+        .map(el => ({ el, text: normalizeDimensionText(el.innerText || el.textContent || '') }))
+        .filter(item => normalizedTargets.some(target => item.text === target || item.text.includes(target)));
+
+    nodes.sort((a, b) => {
+        const ar = a.el.getBoundingClientRect();
+        const br = b.el.getBoundingClientRect();
+        return (ar.width * ar.height) - (br.width * br.height);
+    });
+
+    return nodes[0] ? (nodes[0].el.closest('button, [role="button"], label, span, div') || nodes[0].el) : null;
+}
+
+function normalizeDimensionText(text) {
+    return normalizeText(text || '').replace(/×/g, '*').replace(/[xX]/g, '*');
+}
+
+function combinedImageFieldHasUploadedMedia(index, fallbackInput) {
+    const input = identifyUploadInputs().image || findImageInputInCreativeRoot(index) || fallbackInput;
+    const container = getImageFieldContainer(input, index);
+    if (!container || !container.isConnected) return false;
+
+    const text = normalizeText(container.innerText || container.textContent || '');
+    const uploading = text.includes('上传中') || text.includes('正在上传') || text.includes('处理中') || text.includes('解析中') || /\d{1,3}%/.test(text);
+    if (uploading) return false;
+
+    const hasRealMedia = Array.from(container.querySelectorAll('img, video, canvas, [style*="background-image"]'))
+        .some(el => {
+            const rect = el.getBoundingClientRect();
+            return isElementVisible(el) && rect.width > 30 && rect.height > 30;
+        });
+
+    const hasUploadedState = text.includes('删除') || text.includes('重新上传') || text.includes('已上传') || text.includes('上传成功') ||
+        text.includes('取消填充') || text.includes('消填充');
+
+    const hasUploadListItem = Array.from(container.querySelectorAll('.ep-upload-list__item, .el-upload-list__item, [class*="upload-list__item"]'))
+        .some(el => {
+            const rect = el.getBoundingClientRect();
+            return isElementVisible(el) && rect.width > 30 && rect.height > 30;
+        });
+
+    return !!(hasRealMedia || hasUploadedState || hasUploadListItem);
+}
+
+async function prepareCombinedImageInputForUpload(index, imageInput) {
+    if (!imageInput) return null;
+
+    const imageContainer = getImageFieldContainer(imageInput, index);
+    if (!imageContainer || !fieldHasExistingMedia(imageContainer)) return imageInput;
+
+    console.log(`[LoveToolbox] 一键流程：创意${index} 检测到旧图片，先删除`);
+    const cleared = await clearCombinedExistingImageFieldMedia(index, imageInput);
+    if (!cleared) return null;
+
+    // 删除完成后不再固定等待。waitCombinedImageFieldMediaCleared 已经确认旧图消失，
+    // 这里直接取最新 input，减少“删除后空等一小会儿”的体感延迟。
+    return getFastFreshCombinedImageInput(index, imageInput);
+}
+
+async function getFastFreshCombinedImageInput(index, fallbackInput, timeoutMs = 700) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        const currentInput = identifyUploadInputs().image || findImageInputInCreativeRoot(index) || fallbackInput;
+        if (currentInput && currentInput.isConnected) return currentInput;
+        await combinedSleep(40);
+    }
+    return identifyUploadInputs().image || findImageInputInCreativeRoot(index) || fallbackInput;
+}
+
+async function clearCombinedExistingImageFieldMedia(index, fallbackInput) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        assertLoveCombinedNotCancelled();
+        const currentInput = identifyUploadInputs().image || findImageInputInCreativeRoot(index) || fallbackInput;
+        const container = getImageFieldContainer(currentInput, index);
+        if (!container || !fieldHasExistingMedia(container)) return true;
+
+        revealUploadOverlay(container);
+        await combinedSleep(10);
+
+        const deleteBtn = findDeleteControlInField(container);
+        if (!deleteBtn) {
+            console.warn(`[LoveToolbox] 一键流程：创意${index} 图片找不到删除按钮，第${attempt}次尝试`);
+            await combinedSleep(120);
+            continue;
+        }
+
+        clickCombinedSafeNonSubmit(deleteBtn, '删除旧图片');
+        // 删除按钮点下去后，很多情况下没有确认弹窗；之前默认等 1.8 秒会显得很慢。
+        // 这里只短探测一次确认弹窗，后续在 waitCombinedImageFieldMediaCleared 中继续快速补点。
+        await combinedSleep(45);
+        await raceLoveCombinedCancel(clickVisibleDeleteConfirmIfAny(100));
+
+        const cleared = await waitCombinedImageFieldMediaCleared(index, fallbackInput, 3000);
+        if (cleared) return true;
+    }
+    return false;
+}
+
+async function waitCombinedImageFieldMediaCleared(index, fallbackInput, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        await raceLoveCombinedCancel(clickVisibleDeleteConfirmIfAny(60));
+        const currentInput = identifyUploadInputs().image || findImageInputInCreativeRoot(index) || fallbackInput;
+        const container = getImageFieldContainer(currentInput, index);
+        if (!container || !fieldHasExistingMedia(container)) return true;
+        await combinedSleep(60);
+    }
+    return false;
+}
+
+async function strongUploadCombinedImage(inputElement, file) {
+    assertLoveCombinedNotCancelled();
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    const dropZone = inputElement.closest('.ep-upload-dragger') || inputElement.closest('.ep-upload') || inputElement.closest('.el-upload') || inputElement.parentElement;
+    if (dropZone) {
+        dropZone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }
+
+    try {
+        if (inputElement._valueTracker) inputElement._valueTracker.setValue('');
+    } catch (e) {}
+
+    inputElement.files = dt.files;
+    inputElement.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    inputElement.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+}
+
+async function waitForCombinedImageReaction(container, initialChildCount, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        if (!container) return true;
+        const hasMedia = container.querySelector('img') || container.querySelector('video') || container.querySelector('canvas');
+        const hasProgress = container.querySelector('.ep-progress, .el-progress, [class*="progress"]');
+        const hasList = container.querySelectorAll('.ep-upload-list__item, .el-upload-list__item, li[class*="upload"]').length > 0;
+        const currentCount = container.querySelectorAll('*').length;
+        if (hasMedia || hasProgress || hasList || currentCount !== initialChildCount) return true;
+        await combinedSleep(100);
+    }
+    return false;
+}
+
+async function waitForCombinedImageUploadSettled(container, initialChildCount, index, timeoutMs = 12000) {
+    const start = Date.now();
+    let sawCropDialog = false;
+    let stableCount = 0;
+
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+
+        const clickedCrop = await clickCombinedImageCropUploadIfAny();
+        if (clickedCrop) {
+            sawCropDialog = true;
+            await combinedSleep(180);
+            continue;
+        }
+
+        const visibleError = getVisibleLoveUploadErrorMessage();
+        if (visibleError) {
+            console.warn(`[LoveToolbox] 创意${index} 图片上传检测到页面错误：`, visibleError);
+            return false;
+        }
+
+        const latestInput = identifyUploadInputs().image || findImageInputInCreativeRoot(index);
+        const activeContainer = getImageFieldContainer(latestInput, index) || container;
+        if (!activeContainer) return combinedImageFieldHasUploadedMedia(index, latestInput);
+
+        const text = normalizeText(activeContainer.innerText || activeContainer.textContent || '');
+        const hasMedia = activeContainer.querySelector('img') || activeContainer.querySelector('video') || activeContainer.querySelector('canvas') || activeContainer.querySelector('[style*="background-image"]');
+        const hasProgress = activeContainer.querySelector('.ep-progress, .el-progress, [class*="progress"]') || /\d{1,3}%/.test(text);
+        const hasList = activeContainer.querySelectorAll('.ep-upload-list__item, .el-upload-list__item, li[class*="upload"], [class*="upload-list__item"]').length > 0;
+        const currentCount = activeContainer.querySelectorAll('*').length;
+        const changed = activeContainer === container && currentCount !== initialChildCount;
+        const uploading = hasProgress || text.includes('上传中') || text.includes('正在上传') || text.includes('处理中') || text.includes('解析中');
+        const readyText = text.includes('重新上传') || text.includes('删除') || text.includes('已上传') || text.includes('上传成功') || text.includes('取消填充') || text.includes('消填充');
+        const fieldReady = combinedImageFieldHasUploadedMedia(index, latestInput);
+
+        if (!uploading && (fieldReady || hasMedia || hasList || readyText || changed)) {
+            stableCount += 1;
+            if (stableCount >= (sawCropDialog ? 2 : 1)) return true;
+        } else {
+            stableCount = 0;
+        }
+
+        await combinedSleep(120);
+    }
+
+    const stillDialog = getVisibleImageCropDialog();
+    if (stillDialog) {
+        // 不让页面一直被裁剪弹窗卡住：最后再尝试点一次上传图片。
+        const clicked = await clickCombinedImageCropUploadIfAny();
+        if (clicked) {
+            await combinedSleep(500);
+            return !getVisibleImageCropDialog();
+        }
+    }
+
+    return false;
+}
+
+async function retryCombinedUploadStep(label, stepFn) {
+    let lastError = '';
+    const retries = LOVE_VIDEO_CONFIG.uploadMaxRetries || 3;
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        assertLoveCombinedNotCancelled();
+        resetRecentRateLimitRecord();
+        clearPlatformMessages();
+        try {
+            const ok = await stepFn(attempt);
+            const rawPageError = getRecentRateLimitMessage(10000) || getVisibleLoveUploadErrorMessage();
+            const pageError = getHardVideoUploadErrorText(rawPageError) || (rawPageError && !normalizeText(rawPageError).includes('请先上传视频') ? rawPageError : '');
+            if (ok && !pageError) return true;
+            lastError = pageError || `${label}未确认成功`;
+        } catch (err) {
+            if (isLoveCombinedCancelError(err)) throw err;
+            lastError = err?.message || String(err);
+        }
+
+        if (attempt < retries) {
+            console.warn(`[LoveToolbox] ${label} 第${attempt}次失败，0.5秒后重试：${lastError}`);
+            clearPlatformMessages();
+            await combinedSleep(LOVE_VIDEO_CONFIG.uploadRetryDelayMs || 500);
+        }
+    }
+
+    if (lastError) console.warn(`[LoveToolbox] ${label} 多次重试后仍失败：`, lastError);
+    return false;
+}
+
+function getVisibleLoveUploadErrorMessage() {
+    const nodes = Array.from(document.querySelectorAll(
+        [
+            '.ep-message',
+            '.el-message',
+            '.ep-notification',
+            '.el-notification',
+            '[role="alert"]',
+            '[class*="message"]',
+            '[class*="toast"]',
+            '.ep-form-item__error',
+            '.el-form-item__error',
+            '[class*="form-item__error"]',
+            '[class*="form-item"] .is-error',
+            '[class*="upload-tip"]'
+        ].join(', ')
+    ));
+
+    const texts = nodes
+        .filter(node => isElementVisible(node))
+        .map(node => normalizeText(node.innerText || node.textContent || ''))
+        .filter(Boolean);
+
+    const errorText = texts.find(text =>
+        text.includes('上传失败') ||
+        text.includes('请求频繁') ||
+        text.includes('稍后重试') ||
+        text.includes('请稍后重试') ||
+        // 单独的“请先上传视频”通常是删除旧视频后的临时校验提示，不作为上传失败；
+        // 如果它和“请求频繁/稍后重试”同时出现，上面的限流关键词仍会命中。
+        text.includes('接口') ||
+        text.includes('错误') ||
+        text.includes('失败') ||
+        text.includes('超时') ||
+        text.includes('格式不支持') ||
+        text.includes('超过') ||
+        text.includes('超出') ||
+        text.includes('Too Many') ||
+        text.includes('too frequent') ||
+        text.includes('509115')
+    ) || '';
+
+    if (errorText && isRateLimitMessage(errorText)) {
+        recordRateLimit(errorText);
+    }
+    return errorText;
+}
+
+function getVisibleImageCropDialog() {
+    const dialogs = Array.from(document.querySelectorAll('.ep-dialog, .el-dialog, [role="dialog"]'));
+    return dialogs.find(dialog => {
+        if (!isElementVisible(dialog)) return false;
+        const text = normalizeText(dialog.innerText || dialog.textContent || '');
+        return text.includes('裁剪图片') && text.includes('上传图片');
+    }) || null;
+}
+
+async function clickCombinedImageCropUploadIfAny() {
+    const dialog = getVisibleImageCropDialog();
+    if (!dialog) return false;
+
+    const btn = findButtonByTexts(dialog, ['上传图片']) || Array.from(dialog.querySelectorAll('button, [role="button"], .ep-button, .el-button'))
+        .find(el => isElementVisible(el) && normalizeText(el.innerText || el.textContent || '').includes('上传图片'));
+
+    if (!btn) return false;
+    console.log('[LoveToolbox] 检测到平台“裁剪图片”弹窗，自动点击“上传图片”，避免页面卡住');
+    clickCombinedSafeNonSubmit(btn, '上传图片');
+    await combinedSleep(220);
+    return true;
+}
+
+async function waitCombinedVideoAreasReady(index, timeoutMs = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        const areas = identifyVideoUploadAreas(index, { silent: true });
+        if (areas.videoInput && areas.videoInput.isConnected) return areas;
+        await combinedSleep(100);
+    }
+    return { videoInput: null, previewInput: null, root: getActiveCreativeRoot(index) || document.body };
+}
+
+async function waitCombinedPreviewAreaReady(index, timeoutMs = 15000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        const areas = identifyVideoUploadAreas(index, { silent: true });
+        if (areas.previewInput && areas.previewInput.isConnected) return areas;
+        await combinedSleep(100);
+    }
+    return { videoInput: null, previewInput: null, root: getActiveCreativeRoot(index) || document.body };
+}
+
+function shouldSkipCombinedPreviewForCurrentContext(options = {}, index = 1, areas = null) {
+    const display = normalizeText(options.displayType || detectSelectedOptionText(['开屏', 'Banner', '插屏', '原生', '激励互动']) || '');
+    const creative = normalizeText(options.creativeType || detectSelectedOptionText(['竖版大图', '横版大图', '竖版视频', '横版视频', '小图', '组图', '无图']) || '');
+
+    // 用户指定的特殊兼容：激励互动 + 竖版视频不处理预览图。
+    // 这个组合的后台页面存在“预览图”必填字段，但没有可用的自动生成预览图流程，
+    // 强行上传第三帧反而会报错，所以直接跳过。
+    if (display.includes('激励互动') && creative.includes('竖版视频')) {
+        return true;
+    }
+
+    // 兜底：如果当前预览图字段存在，但没有“自动生成/生成预览图”入口，并且页面上下文明确是激励互动，
+    // 也跳过，避免选项文字动态变化或带计数时识别失败。
+    const currentAreas = areas || identifyVideoUploadAreas(index, { silent: true });
+    const previewInput = currentAreas && currentAreas.previewInput;
+    const previewContainer = previewInput ? getPreviewFieldContainer(previewInput, index) : null;
+    const hasPreviewGenerator = previewContainer ? !!findPreviewAutoButtonLoose(previewContainer) : false;
+    if (display.includes('激励互动') && previewContainer && !hasPreviewGenerator) {
+        return true;
+    }
+
+    return false;
+}
+
+async function clearCombinedExistingVideoAndPreview(index, areas) {
+    // v9 加速：视频上传前只清理“旧视频”。旧预览图不阻塞新视频上传，
+    // 等视频上传完成、真正要写入第三帧预览图时再清理预览图，减少“删除旧视频后空等”的体感时间。
+    let ok = true;
+    const latest = identifyVideoUploadAreas(index, { silent: true });
+    const videoInput = latest.videoInput || areas.videoInput;
+
+    const videoContainer = getVideoFieldContainer(videoInput, index);
+    if (videoContainer && fieldHasExistingMedia(videoContainer)) {
+        ok = await clearCombinedExistingMediaField(index, 'video', videoInput);
+        if (!ok) return false;
+    }
+
+    return ok;
+}
+
+async function clearCombinedExistingMediaField(index, kind, fallbackInput) {
+    const label = kind === 'video' ? '视频' : '预览图';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        assertLoveCombinedNotCancelled();
+        const container = getFreshMediaFieldContainer(index, kind, fallbackInput);
+        if (!container || !fieldHasExistingMedia(container)) return true;
+
+        revealUploadOverlay(container);
+        await combinedSleep(10);
+
+        const deleteBtn = findDeleteControlInField(container);
+        if (!deleteBtn) {
+            console.warn(`[LoveToolbox] 一键流程：创意${index} ${label} 找不到删除按钮，第${attempt}次尝试`);
+            await combinedSleep(80);
+            continue;
+        }
+
+        clickCombinedSafeNonSubmit(deleteBtn, `删除旧${label}`);
+        await combinedSleep(35);
+        await raceLoveCombinedCancel(clickVisibleDeleteConfirmIfAny(90));
+
+        const cleared = await waitCombinedFieldMediaCleared(index, kind, fallbackInput, 3500);
+        if (cleared) return true;
+    }
+    return false;
+}
+
+async function waitCombinedFieldMediaCleared(index, kind, fallbackInput, timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+        assertLoveCombinedNotCancelled();
+        await raceLoveCombinedCancel(clickVisibleDeleteConfirmIfAny(60));
+        const container = getFreshMediaFieldContainer(index, kind, fallbackInput);
+        if (!container || !fieldHasExistingMedia(container)) return true;
+        await combinedSleep(60);
+    }
+    return false;
+}
+
+
+function clearUploadFieldVisibleErrors(inputElement) {
+    if (!inputElement) return;
+    const field = inputElement.closest('.ep-form-item, .el-form-item, [class*="form-item"]') ||
+                  inputElement.closest('.ep-upload, .el-upload') ||
+                  inputElement.parentElement;
+    if (!field) return;
+
+    Array.from(field.querySelectorAll('.ep-form-item__error, .el-form-item__error, [class*="form-item__error"]')).forEach(node => {
+        const text = normalizeText(node.innerText || node.textContent || '');
+        if (
+            text.includes('请求频繁') ||
+            text.includes('稍后重试') ||
+            text.includes('请先上传视频') ||
+            text.includes('上传失败') ||
+            text.includes('错误') ||
+            text.includes('失败')
+        ) {
+            try { node.remove(); } catch (e) { node.style.display = 'none'; }
+        }
+    });
+
+    let node = field;
+    for (let i = 0; node && i < 3; i++, node = node.parentElement) {
+        try { node.classList && node.classList.remove('is-error'); } catch (e) {}
+    }
+}
+
+async function strongUploadCombinedVideo(inputElement, file) {
+    assertLoveCombinedNotCancelled();
+    clearUploadFieldVisibleErrors(inputElement);
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    const uploadRoot = inputElement.closest('.ep-upload, .el-upload') || inputElement.parentElement;
+    if (uploadRoot) {
+        uploadRoot.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+        uploadRoot.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+        uploadRoot.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }
+
+    try {
+        if (inputElement._valueTracker) inputElement._valueTracker.setValue('');
+    } catch (e) {}
+
+    inputElement.files = dt.files;
+    inputElement.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    inputElement.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+}
+
+function waitForCombinedVideoUploadComplete(index, snapshot, timeoutMs = 120000) {
+    return new Promise((resolve, reject) => {
+        const start = Date.now();
+        let resolved = false;
+        let stableDoneCount = 0;
+        let lastLogAt = 0;
+        const root = snapshot.root || document.body;
+
+        const finish = (result) => {
+            if (resolved) return;
+            resolved = true;
+            observer.disconnect();
+            clearInterval(fallbackTimer);
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            resolve(result);
+        };
+
+        const cancelHandler = () => {
+            if (resolved) return;
+            resolved = true;
+            observer.disconnect();
+            clearInterval(fallbackTimer);
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+        };
+        LoveCombinedTask.cancelHandlers.add(cancelHandler);
+
+        const check = () => {
+            if (LoveCombinedTask.cancelled) return cancelHandler();
+            const state = readVideoUploadState(index, snapshot);
+            const now = Date.now();
+            if (now - lastLogAt > 1200 || state.done || state.error) {
+                console.log(`[LoveToolbox] 一键流程：创意${index} 视频上传状态检测：`, state);
+                lastLogAt = now;
+            }
+
+            const recentRateLimit = getRecentRateLimitMessage(5000);
+            // 上传刚触发时，页面上可能还短暂保留上一轮的“请求频繁/请稍后重试”提示。
+            // 给组件一点点时间清除旧错误，避免刚开始就立刻误判失败。
+            if ((state.error || recentRateLimit) && Date.now() - start > 650) return finish(false);
+            if (state.done) {
+                stableDoneCount += 1;
+                if (stableDoneCount >= 2) return finish(true);
+            } else {
+                stableDoneCount = 0;
+            }
+            if (Date.now() - start > timeoutMs) return finish(false);
+        };
+
+        const observer = new MutationObserver(check);
+        observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true });
+        const fallbackTimer = setInterval(check, 180);
+        check();
+    });
+}
+
+async function fillCombinedPreviewByThirdFrame(previewInput, index, sourceVideoFile) {
+    assertLoveCombinedNotCancelled();
+    const latestAreas = identifyVideoUploadAreas(index, { silent: true });
+    const latestPreviewInput = latestAreas.previewInput || previewInput;
+    const previewContainer = getPreviewFieldContainer(latestPreviewInput, index);
+    if (!previewContainer || !latestPreviewInput) return false;
+
+    const previewFile = await createCombinedPreviewImageFromThirdFrame(sourceVideoFile, index);
+    const snapshot = makePreviewSnapshot(previewContainer);
+
+    await waitForCombinedRequestCooldown('第三帧预览图上传', index);
+    await strongUploadCombinedPreviewImage(latestPreviewInput, previewFile);
+    noteNetworkAction();
+
+    return await waitForCombinedPreviewFilled(previewContainer, snapshot, 22000);
+}
+
+async function createCombinedPreviewImageFromThirdFrame(videoFile, index) {
+    assertLoveCombinedNotCancelled();
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+
+    const objectUrl = URL.createObjectURL(videoFile);
+    video.src = objectUrl;
+
+    try {
+        await raceLoveCombinedCancel(waitForVideoEvent(video, 'loadedmetadata', 12000));
+        const fps = 30;
+        const thirdFrameTime = 2 / fps;
+        const fallbackTime = 0.08;
+        const targetTime = Number.isFinite(video.duration) && video.duration > 0
+            ? Math.min(Math.max(thirdFrameTime, 0.001), Math.max(video.duration - 0.001, 0.001))
+            : fallbackTime;
+
+        video.currentTime = targetTime;
+        await raceLoveCombinedCancel(waitForVideoEvent(video, 'seeked', 12000).catch(() => waitForVideoEvent(video, 'loadeddata', 12000)));
+
+        const sourceWidth = video.videoWidth;
+        const sourceHeight = video.videoHeight;
+        if (!sourceWidth || !sourceHeight) throw new Error('无法读取视频第三帧尺寸');
+
+        const canvas = document.createElement('canvas');
+        canvas.width = sourceWidth;
+        canvas.height = sourceHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, sourceWidth, sourceHeight);
+
+        const blob = await raceLoveCombinedCancel(canvasToLimitedJpeg(canvas, 145 * 1024));
+        console.log(`[LoveToolbox] 一键流程：创意${index} 预览图使用视频第三帧，尺寸 ${sourceWidth}x${sourceHeight}，大小 ${blob.size}`);
+        return new File([blob], `preview_third_frame_${index}_${sourceWidth}x${sourceHeight}_${Date.now()}.jpg`, { type: 'image/jpeg' });
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+}
+
+async function strongUploadCombinedPreviewImage(inputElement, file) {
+    assertLoveCombinedNotCancelled();
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    const uploadRoot = inputElement.closest('.ep-upload, .el-upload') || inputElement.parentElement;
+    if (uploadRoot) {
+        uploadRoot.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }
+
+    try {
+        if (inputElement._valueTracker) inputElement._valueTracker.setValue('');
+    } catch (e) {}
+
+    inputElement.files = dt.files;
+    inputElement.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    inputElement.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+}
+
+function waitForCombinedPreviewFilled(container, snapshot, timeoutMs = 22000) {
+    return new Promise((resolve, reject) => {
+        const start = Date.now();
+        let resolved = false;
+        let stableCount = 0;
+
+        const finish = (result) => {
+            if (resolved) return;
+            resolved = true;
+            observer.disconnect();
+            clearInterval(timer);
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            resolve(result);
+        };
+
+        const cancelHandler = () => {
+            if (resolved) return;
+            resolved = true;
+            observer.disconnect();
+            clearInterval(timer);
+            LoveCombinedTask.cancelHandlers.delete(cancelHandler);
+            const err = new Error(LoveCombinedTask.reason || '任务已停止');
+            err.name = 'LoveCombinedCancelled';
+            reject(err);
+        };
+        LoveCombinedTask.cancelHandlers.add(cancelHandler);
+
+        const check = () => {
+            if (LoveCombinedTask.cancelled) return cancelHandler();
+            const state = readPreviewState(container, snapshot);
+            const visibleError = getVisibleHardVideoUploadErrorMessage();
+            console.log('[LoveToolbox] 一键流程：预览图填充状态检测：', state);
+            if (visibleError && Date.now() - start > 650) return finish(false);
+            if (state.filled) {
+                stableCount += 1;
+                if (stableCount >= 2) return finish(true);
+            } else {
+                stableCount = 0;
+            }
+            if (Date.now() - start > timeoutMs) return finish(false);
+        };
+
+        const observer = new MutationObserver(check);
+        observer.observe(container, { childList: true, subtree: true, attributes: true, characterData: true });
+        const timer = setInterval(check, 180);
+        check();
+    });
+}
+
+async function combinedFillUnifiedTextForTargetCreatives(titleOrName, subtitle, count) {
+    const safeCount = Math.max(1, Math.min(Number(count) || 1, LOVE_VIDEO_CONFIG.maxFiles || 10));
+    const hasAnyCreativeTab = getCombinedCreativeIndices().length > 0;
+
+    for (let index = 1; index <= safeCount; index++) {
+        assertLoveCombinedNotCancelled();
+
+        let root = null;
+        if (hasAnyCreativeTab) {
+            const switched = await switchToCreativeTabCombined(index);
+            if (!switched) {
+                console.warn(`[LoveToolbox] 一键流程：填充标题时没找到创意${index}，跳过`);
+                continue;
+            }
+            root = await waitForCreativeRootReadyForCombinedTextFill(index, 5000);
+        } else if (index === 1) {
+            root = getVisibleCreativeRootForTextFill() || document.body;
+        }
+
+        if (!root) {
+            console.warn(`[LoveToolbox] 一键流程：创意${index} 未找到标题区域，跳过`);
+            continue;
+        }
+
+        const result = fillUnifiedTitlePairInCreativeRoot(root, titleOrName, subtitle);
+        if (result.filled) {
+            console.log(`[LoveToolbox] 一键流程：创意${index} 标题已填写，字段类型：${result.kind}`);
+        } else {
+            console.warn(`[LoveToolbox] 一键流程：创意${index} 未找到应用名称/应用副标题或创意标题/创意副标题，跳过标题填写`);
+        }
+
+        await combinedSleep(80);
+    }
+}
+
+function fillUnifiedTitlePairInCreativeRoot(root, titleOrName, subtitle) {
+    const hasTitle = !!titleOrName;
+    const hasSubtitle = !!subtitle;
+    if (!hasTitle && !hasSubtitle) return { filled: false, kind: 'none' };
+
+    const appNameField = findCreativeTextInput(root, ['应用名称'], ['请输入应用名称', '应用名称']);
+    const appSubtitleField = findCreativeTextInput(root, ['应用副标题'], ['请输入应用副标题', '应用副标题']);
+    const creativeTitleField = findCreativeTextInput(root, ['创意标题'], ['请输入创意标题', '创意标题']);
+    const creativeSubtitleField = findCreativeTextInput(root, ['创意副标题'], ['请输入创意副标题', '创意副标题']);
+
+    let titleField = null;
+    let subtitleField = null;
+    let kind = '';
+
+    // 成对优先，避免把“创意标题 + 应用副标题”这种跨区域组合误填。
+    if (appNameField && appSubtitleField) {
+        titleField = appNameField;
+        subtitleField = appSubtitleField;
+        kind = '应用名称/应用副标题';
+    } else if (creativeTitleField && creativeSubtitleField) {
+        titleField = creativeTitleField;
+        subtitleField = creativeSubtitleField;
+        kind = '创意标题/创意副标题';
+    } else {
+        // 兜底：只在页面结构不完整时按同义字段查找，但仍然只有两个输入值。
+        titleField = appNameField || creativeTitleField || findCreativeTextInput(
+            root,
+            ['应用名称', '创意标题'],
+            ['请输入应用名称', '应用名称', '请输入创意标题', '创意标题']
+        );
+        subtitleField = appSubtitleField || creativeSubtitleField || findCreativeTextInput(
+            root,
+            ['应用副标题', '创意副标题'],
+            ['请输入应用副标题', '应用副标题', '请输入创意副标题', '创意副标题']
+        );
+        kind = '兼容字段';
+    }
+
+    let filled = false;
+    if (hasTitle && titleField) {
+        setFormControlValue(titleField, titleOrName);
+        filled = true;
+    }
+    if (hasSubtitle && subtitleField) {
+        setFormControlValue(subtitleField, subtitle);
+        filled = true;
+    }
+
+    return { filled, kind };
+}
+
+
 // === 1.1 应用名称/应用副标题批量填充：独立功能，不影响图片/视频 ===
 function openAppTextFillDialog() {
     const existing = document.getElementById('love-text-fill-modal');
@@ -1759,16 +3428,8 @@ async function prepareImageInputForUpload(index, imageInput) {
         return null;
     }
 
-    // 删除后页面可能重建 input，因此重新识别一次图片上传框。
-    await sleep(150);
-    let refreshedInput = identifyUploadInputs().image;
-
-    if (!refreshedInput) {
-        await sleep(250);
-        refreshedInput = identifyUploadInputs().image;
-    }
-
-    return refreshedInput || imageInput;
+    // 删除后页面可能重建 input。这里不再固定空等，直接快速取最新上传框。
+    return identifyUploadInputs().image || imageInput;
 }
 
 async function clearExistingImageFieldMedia(index, fallbackInput) {
@@ -1781,21 +3442,21 @@ async function clearExistingImageFieldMedia(index, fallbackInput) {
         }
 
         revealUploadOverlay(container);
-        await sleep(120);
+        await sleep(30);
 
         const deleteBtn = findDeleteControlInField(container);
         if (!deleteBtn) {
             console.warn(`[LoveToolbox] 创意${index} 图片找不到删除按钮，第${attempt}次尝试`);
-            await sleep(300);
+            await sleep(120);
             continue;
         }
 
         console.log(`[LoveToolbox] 创意${index} 删除已有图片：`, deleteBtn);
         forceClickElement(deleteBtn);
-        await sleep(250);
-        await clickVisibleDeleteConfirmIfAny();
+        await sleep(45);
+        await clickVisibleDeleteConfirmIfAny(100);
 
-        const cleared = await waitForImageFieldMediaCleared(index, fallbackInput, 8000);
+        const cleared = await waitForImageFieldMediaCleared(index, fallbackInput, 3000);
         if (cleared) {
             console.log(`[LoveToolbox] 创意${index} 已删除旧图片`);
             return true;
@@ -1809,7 +3470,7 @@ async function waitForImageFieldMediaCleared(index, fallbackInput, timeoutMs = 8
     const start = Date.now();
 
     while (Date.now() - start < timeoutMs) {
-        await clickVisibleDeleteConfirmIfAny(250);
+        await clickVisibleDeleteConfirmIfAny(60);
 
         const currentInput = identifyUploadInputs().image || fallbackInput;
         const container = getImageFieldContainer(currentInput, index);
@@ -1818,7 +3479,7 @@ async function waitForImageFieldMediaCleared(index, fallbackInput, timeoutMs = 8
             return true;
         }
 
-        await sleep(250);
+        await sleep(60);
     }
 
     return false;
@@ -1909,18 +3570,59 @@ async function startVideoAutomation(files) {
             }
         }
 
-        const snapshot = makeVideoUploadSnapshot(areas.videoInput, index);
-        loveDebug(`[LoveToolbox] 创意${index} 准备上传视频：`, file.name, file.size);
+        let uploadDone = false;
+        let rateLimitAfterVideo = '';
+        let lastVideoError = '';
 
-        await waitForRequestCooldown('视频上传', index);
-        await strongUploadVideo(areas.videoInput, file);
-        noteNetworkAction();
+        for (let attempt = 1; attempt <= (LOVE_VIDEO_CONFIG.uploadMaxRetries || 3); attempt++) {
+            resetRecentRateLimitRecord();
+            clearPlatformMessages();
 
-        const uploadDone = await waitForVideoUploadComplete(index, snapshot, 120000);
-        const rateLimitAfterVideo = getRecentRateLimitMessage();
+            if (attempt > 1) {
+                loveDebug(`[LoveToolbox] 创意${index} 视频上传第${attempt}次重试，先判断上一轮是否已经回显`);
+                const retryAreas = await waitForVideoAreasReady(index, 6000);
+                if (retryAreas.videoInput && videoFieldHasUploadedMedia(index, retryAreas.videoInput)) {
+                    loveDebug(`[LoveToolbox] 创意${index} 视频已经回显，停止重试，避免误删刚上传的视频`);
+                    clearUploadFieldVisibleErrors(retryAreas.videoInput);
+                    uploadDone = true;
+                    break;
+                }
+                if (retryAreas.videoInput && LOVE_VIDEO_CONFIG.clearExistingBeforeUpload) {
+                    await clearExistingVideoAndPreview(index, retryAreas);
+                }
+                await sleep(LOVE_VIDEO_CONFIG.uploadRetryDelayMs || 500);
+            }
 
-        if (!uploadDone || rateLimitAfterVideo) {
-            const reason = rateLimitAfterVideo || `视频未确认上传成功`;
+            areas = await waitForVideoAreasReady(index, 10000);
+            if (!areas.videoInput) {
+                lastVideoError = `创意${index} 重试时找不到视频上传框`;
+                break;
+            }
+
+            const snapshot = makeVideoUploadSnapshot(areas.videoInput, index);
+            loveDebug(`[LoveToolbox] 创意${index} 准备上传视频，第${attempt}次：`, file.name, file.size);
+
+            await waitForRequestCooldown('视频上传', index);
+            await strongUploadVideo(areas.videoInput, file);
+            noteNetworkAction();
+
+            const thisUploadDone = await waitForVideoUploadComplete(index, snapshot, 120000);
+            rateLimitAfterVideo = getRecentRateLimitMessage() || getVisibleHardVideoUploadErrorMessage();
+
+            if (thisUploadDone && !rateLimitAfterVideo) {
+                uploadDone = true;
+                break;
+            }
+
+            lastVideoError = rateLimitAfterVideo || `视频未确认上传成功`;
+            if (attempt < (LOVE_VIDEO_CONFIG.uploadMaxRetries || 3)) {
+                loveDebug(`[LoveToolbox] 创意${index} 视频上传失败，0.5秒后重试：${lastVideoError}`);
+                await sleep(LOVE_VIDEO_CONFIG.uploadRetryDelayMs || 500);
+            }
+        }
+
+        if (!uploadDone) {
+            const reason = lastVideoError || rateLimitAfterVideo || `视频未确认上传成功`;
             showToast(`🛑 创意${index} 已停止：${reason}`, 10000, '🛑');
             stopped = true;
             break;
@@ -1997,6 +3699,59 @@ async function waitForPreviewAreaReady(index, timeoutMs = 15000) {
     return { videoInput: null, previewInput: null };
 }
 
+
+function getHardVideoUploadErrorText(text) {
+    const t = normalizeText(text || '');
+    if (!t) return '';
+    if (
+        t.includes('请求频繁') ||
+        t.includes('稍后重试') ||
+        t.includes('请稍后重试') ||
+        t.includes('上传失败') ||
+        t.includes('格式不支持') ||
+        t.includes('接口') ||
+        t.includes('超时') ||
+        t.includes('超过') ||
+        t.includes('超出') ||
+        t.includes('TooMany') ||
+        t.includes('toofrequent') ||
+        t.includes('509115')
+    ) {
+        return t;
+    }
+    // “请先上传视频”单独出现，多数是删除旧视频后平台还没刷新校验状态，不能马上判失败。
+    return '';
+}
+
+function getVisibleHardVideoUploadErrorMessage() {
+    const msg = getVisibleLoveUploadErrorMessage();
+    return getHardVideoUploadErrorText(msg);
+}
+
+function videoFieldHasUploadedMedia(index, fallbackInput) {
+    const areas = identifyVideoUploadAreas(index, { silent: true });
+    const input = (areas && areas.videoInput) || fallbackInput;
+    const container = getVideoFieldContainer(input, index);
+    if (!container) return false;
+
+    const text = normalizeText(container.innerText || container.textContent || '');
+    const uploading =
+        text.includes('上传中') ||
+        text.includes('正在上传') ||
+        text.includes('解析中') ||
+        text.includes('处理中') ||
+        text.includes('等待中') ||
+        /\d{1,3}%/.test(text) ||
+        !!container.querySelector('.ep-progress, .el-progress, [class*="progress"]');
+
+    if (uploading) return false;
+
+    const hardError = getHardVideoUploadErrorText(text);
+    if (hardError && !fieldHasExistingMedia(container)) return false;
+
+    return fieldHasExistingMedia(container);
+}
+
 function makeVideoUploadSnapshot(videoInput, index) {
     const root = getActiveCreativeRoot(index) || document.body;
     const field = getVideoFieldContainer(videoInput, index) || root;
@@ -2048,11 +3803,16 @@ function readVideoUploadState(index, snapshot) {
         allText.includes('处理中') ||
         allText.includes('等待中');
 
+    const rawVisibleErrorText = getVisibleLoveUploadErrorMessage();
+    const visibleErrorText = getHardVideoUploadErrorText(rawVisibleErrorText);
+    const hardTextError = getHardVideoUploadErrorText(allText);
+    const rateLimitText = isRateLimitMessage(allText) ? (visibleErrorText || hardTextError || '请求频繁，请稍后重试') : '';
+    if (rateLimitText) recordRateLimit(rateLimitText);
+
     const error =
-        allText.includes('上传失败') ||
-        allText.includes('格式不支持') ||
-        allText.includes('超出') ||
-        allText.includes('错误');
+        !!visibleErrorText ||
+        !!rateLimitText ||
+        !!hardTextError;
 
     const readyText =
         allText.includes('上传成功') ||
@@ -2070,12 +3830,12 @@ function readVideoUploadState(index, snapshot) {
         rootMediaCount > snapshot.rootMediaCount ||
         fieldMediaCount > snapshot.fieldMediaCount;
 
-    const hasVideoPreviewInField = !!field.querySelector('video, img, canvas, [style*="background-image"], .ep-upload-list__item, .el-upload-list__item, li[class*="upload"]');
+    const hasFreshVideoMedia = fieldMediaCount > snapshot.fieldMediaCount || rootMediaCount > snapshot.rootMediaCount;
 
     const done =
         !uploading &&
         changed &&
-        (readyText || successClass || mediaGrew || hasVideoPreviewInField);
+        (readyText || successClass || mediaGrew || hasFreshVideoMedia);
 
     return {
         changed,
@@ -2087,6 +3847,7 @@ function readVideoUploadState(index, snapshot) {
         successClass,
         rootMediaCount,
         fieldMediaCount,
+        errorText: visibleErrorText || rateLimitText || '',
         text: fieldText.slice(0, 120) || rootText.slice(0, 120)
     };
 }
@@ -2117,7 +3878,8 @@ function waitForVideoUploadComplete(index, snapshot, timeoutMs = 120000) {
                 lastLogAt = now;
             }
 
-            if (state.error || getRecentRateLimitMessage(5000)) {
+            const recentRateLimit = getRecentRateLimitMessage(5000);
+            if ((state.error || recentRateLimit) && Date.now() - start > 650) {
                 finish(false);
                 return;
             }
@@ -2166,7 +3928,7 @@ async function clearExistingVideoAndPreview(index, areas) {
         loveDebug(`[LoveToolbox] 创意${index} 检测到已有预览图，且存在自动生成按钮，准备删除旧预览图`);
         const ok = await clearExistingFieldMedia(index, 'preview', previewInput);
         if (!ok) return false;
-        await sleep(250);
+        // v9：删除确认函数已经确认完成，不再额外固定等待。
     } else if (previewContainer && fieldHasExistingMedia(previewContainer) && !hasPreviewAutoButton) {
         // 激励互动等无“自动生成/生成预览图”按钮的场景：不生成预览图，也不删除已有预览图。
         loveDebug(`[LoveToolbox] 创意${index} 预览图区域无自动生成按钮，保留已有预览图并跳过预览图处理`);
@@ -2182,7 +3944,7 @@ async function clearExistingVideoAndPreview(index, areas) {
         loveDebug(`[LoveToolbox] 创意${index} 检测到已有视频，准备删除`);
         const ok = await clearExistingFieldMedia(index, 'video', refreshedVideoInput);
         if (!ok) return false;
-        await sleep(250);
+        // v9：删除确认函数已经确认完成，不再额外固定等待。
     }
 
     if (hasAnythingToClear) {
@@ -2203,21 +3965,21 @@ async function clearExistingFieldMedia(index, kind, fallbackInput) {
         }
 
         revealUploadOverlay(container);
-        await sleep(120);
+        await sleep(20);
 
         const deleteBtn = findDeleteControlInField(container);
         if (!deleteBtn) {
             console.warn(`[LoveToolbox] 创意${index} ${label} 找不到删除按钮，第${attempt}次尝试`);
-            await sleep(300);
+            await sleep(80);
             continue;
         }
 
         console.log(`[LoveToolbox] 创意${index} 删除已有${label}：`, deleteBtn);
         forceClickElement(deleteBtn);
-        await sleep(250);
-        await clickVisibleDeleteConfirmIfAny();
+        await sleep(45);
+        await clickVisibleDeleteConfirmIfAny(100);
 
-        const cleared = await waitForFieldMediaCleared(index, kind, fallbackInput, 8000);
+        const cleared = await waitForFieldMediaCleared(index, kind, fallbackInput, 3500);
         if (cleared) {
             console.log(`[LoveToolbox] 创意${index} 已删除旧${label}`);
             return true;
@@ -2518,23 +4280,30 @@ function getElementClassText(el) {
 function forceClickElement(element) {
     if (!element) return false;
 
-    const target = element.closest('button, [role="button"], span, i, svg, div') || element;
+    // 重要：Element Plus 的单选按钮规格是 <label class="ep-radio-button">...<input>...<span>1080*1920</span></label>。
+    // 之前这里没有把 label 放进 selector，导致传入 label 时会向上命中父级 div.ep-radio-group，
+    // 实际点到的是整组单选框而不是目标规格，所以开屏/插屏 + 竖版大图时无法稳定切到 1080*1920。
+    const target = element.closest('button, [role="button"], label, span, i, svg, div') || element;
 
     // 如果删除按钮被 hover 样式隐藏，先临时解除隐藏和 pointer-events 限制。
-    try {
-        target.style && target.style.setProperty('display', 'inline-flex', 'important');
-        target.style && target.style.setProperty('opacity', '1', 'important');
-        target.style && target.style.setProperty('visibility', 'visible', 'important');
-        target.style && target.style.setProperty('pointer-events', 'auto', 'important');
+    // 但不能对 Element Plus 的 radio-button 做这些 inline style 修改，否则规格按钮会出现选中框错位。
+    const isRadioButtonTarget = !!(target.closest && target.closest('label.ep-radio-button, label.el-radio-button'));
+    if (!isRadioButtonTarget) {
+        try {
+            target.style && target.style.setProperty('display', 'inline-flex', 'important');
+            target.style && target.style.setProperty('opacity', '1', 'important');
+            target.style && target.style.setProperty('visibility', 'visible', 'important');
+            target.style && target.style.setProperty('pointer-events', 'auto', 'important');
 
-        const parentAction = target.closest('.ep-upload-list__item-actions, .el-upload-list__item-actions, [class*="upload-list__item-actions"]');
-        if (parentAction) {
-            parentAction.style.setProperty('display', 'inline-flex', 'important');
-            parentAction.style.setProperty('opacity', '1', 'important');
-            parentAction.style.setProperty('visibility', 'visible', 'important');
-            parentAction.style.setProperty('pointer-events', 'auto', 'important');
-        }
-    } catch (e) {}
+            const parentAction = target.closest('.ep-upload-list__item-actions, .el-upload-list__item-actions, [class*="upload-list__item-actions"]');
+            if (parentAction) {
+                parentAction.style.setProperty('display', 'inline-flex', 'important');
+                parentAction.style.setProperty('opacity', '1', 'important');
+                parentAction.style.setProperty('visibility', 'visible', 'important');
+                parentAction.style.setProperty('pointer-events', 'auto', 'important');
+            }
+        } catch (e) {}
+    }
 
     const rect = target.getBoundingClientRect();
     const clientX = rect.left + Math.max(1, rect.width / 2 || 1);
@@ -2564,11 +4333,12 @@ async function clickVisibleDeleteConfirmIfAny(timeoutMs = 1800) {
             if (btn) {
                 console.log('[LoveToolbox] 点击删除确认按钮：', normalizeText(btn.innerText || btn.textContent || ''));
                 forceClickElement(btn);
-                await sleep(300);
+                await sleep(90);
                 return true;
             }
         }
-        await sleep(120);
+        const remain = timeoutMs - (Date.now() - start);
+        await sleep(Math.min(60, Math.max(10, remain)));
     }
 
     return false;
@@ -2637,6 +4407,7 @@ async function strongUpload(inputElement, file) {
 
 // 视频专用上传函数
 async function strongUploadVideo(inputElement, file) {
+    clearUploadFieldVisibleErrors(inputElement);
     const dt = new DataTransfer();
     dt.items.add(file);
 
@@ -2695,11 +4466,11 @@ function clearLoveToasts() {
     Array.from(container.children).forEach(child => child.remove());
 }
 
-function showToast(message, duration = 5000, icon = 'ℹ️') {
+function showToast(message, duration = 2200, icon = 'ℹ️') {
     const container = document.getElementById('love-toast-container');
     if (!container) return;
 
-    const displayDuration = Math.max(duration || 0, 4500);
+    const displayDuration = Math.max(Number(duration) || 2200, 800);
     const toast = document.createElement('div');
     toast.className = `love-toast-slide`;
     toast.innerHTML = `<span class="love-toast-icon">${icon}</span> <span>${message}</span>`;
@@ -3385,11 +5156,31 @@ function getActiveCreativeRoot(index) {
 }
 
 function getVideoFieldContainer(input, index) {
-    return getFieldContainer(input, index, ['视频'], ['预览图', '封面', '头像', 'Logo', 'logo']);
+    const tight = getTightUploadFormItem(input, index, ['视频'], ['预览图', '封面', '头像', 'Logo', 'logo']);
+    return tight || getFieldContainer(input, index, ['视频'], ['预览图', '封面', '头像', 'Logo', 'logo']);
 }
 
 function getPreviewFieldContainer(input, index) {
-    return getFieldContainer(input, index, ['预览图', '封面'], ['头像', 'Logo', 'logo']);
+    const tight = getTightUploadFormItem(input, index, ['预览图', '封面'], ['头像', 'Logo', 'logo']);
+    return tight || getFieldContainer(input, index, ['预览图', '封面'], ['头像', 'Logo', 'logo']);
+}
+
+function getTightUploadFormItem(input, index, includeWords, excludeWords) {
+    if (!input) return null;
+    const root = getActiveCreativeRoot(index) || document.body;
+    let node = input.closest('.ep-form-item, .el-form-item, [class*="form-item"]');
+    for (let i = 0; i < 8 && node && node !== document.body; i++, node = node.parentElement) {
+        if (root && root !== document.body && !root.contains(node)) break;
+        const label = node.querySelector('.ep-form-item__label, .el-form-item__label, label');
+        const labelText = normalizeText(label ? (label.innerText || label.textContent || '') : '');
+        const allText = normalizeText(node.innerText || node.textContent || '');
+        const hasInclude = includeWords.some(word => labelText.includes(normalizeText(word)) || allText.includes(normalizeText(word)));
+        const hasExcludeInLabel = excludeWords.some(word => labelText.includes(normalizeText(word)));
+        const hasExcludeInAll = excludeWords.some(word => allText.includes(normalizeText(word)));
+        if (hasInclude && !hasExcludeInLabel && !hasExcludeInAll) return node;
+        if (hasInclude && labelText && !hasExcludeInLabel) return node;
+    }
+    return null;
 }
 
 function getFieldContainer(input, index, includeWords, excludeWords) {
