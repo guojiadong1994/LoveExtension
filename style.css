@@ -29,8 +29,8 @@
 
 /* 展开状态 */
 #love-float-ball:not(.is-dragging):hover {
-    width: 166px !important;
-    height: 92px !important;
+    width: 114px !important;
+    height: 60px !important;
     border-radius: 18px !important;
     background: rgba(255, 255, 255, 0.92) !important; 
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15) !important;
@@ -39,8 +39,8 @@
 /* 拖拽中状态 */
 #love-float-ball.is-dragging {
     transition: none !important; 
-    width: 166px !important;
-    height: 92px !important;
+    width: 114px !important;
+    height: 60px !important;
     border-radius: 18px !important;
     background: rgba(255, 255, 255, 0.92) !important;
     cursor: grabbing !important;
@@ -65,8 +65,8 @@
 /* 按钮组 */
 .btn-group {
     display: grid !important;
-    grid-template-columns: repeat(3, 38px) !important;
-    grid-template-rows: repeat(2, 38px) !important;
+    grid-template-columns: repeat(2, 38px) !important;
+    grid-template-rows: 38px !important;
     gap: 8px 10px !important; 
     opacity: 0 !important;
     transform: translateY(8px) !important;
@@ -118,11 +118,7 @@
 
 #btn-combo { grid-column: 1 !important; grid-row: 1 !important; }
 #btn-link-check { grid-column: 2 !important; grid-row: 1 !important; }
-#btn-img { grid-column: 1 !important; grid-row: 2 !important; }
-#btn-video { grid-column: 2 !important; grid-row: 2 !important; }
-#btn-text { grid-column: 3 !important; grid-row: 2 !important; }
 
-#love-hidden-input { display: none !important; }
 
 /* 消息条 Toast */
 .love-toast {

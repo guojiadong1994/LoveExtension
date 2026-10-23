@@ -5,7 +5,8 @@
   "description": "运营自动化悬浮球：支持素材上传、视频上传、文案填充、地址检查以及一键素材+文案。",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "content_scripts": [
     {
