@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LoveToolbox - 运营自动化悬浮球",
-  "version": "1.1",
-  "description": "运营自动化悬浮球：支持素材上传、视频上传、文案填充、地址检查以及一键素材+文案。",
+  "version": "1.3.5",
+  "description": "使用文件访问句柄跨页上传图片/视频，不复制素材到 IndexedDB；原功能保持不变。",
   "permissions": [
     "activeTab",
     "scripting",
@@ -19,6 +19,20 @@
       "css": [
         "style.css"
       ]
+    },
+    {
+      "matches": [
+        "https://ad.vivo.com.cn/marketing/*"
+      ],
+      "js": [
+        "workflow/media-store.js",
+        "workflow/creative-detect.js",
+        "workflow/content-workflow.js"
+      ],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "background": {
+    "service_worker": "workflow/background.js"
+  }
 }
