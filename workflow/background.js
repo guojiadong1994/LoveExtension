@@ -3,7 +3,7 @@
 
 const PREFIX = 'loveWorkflowV1:';
 const TTL = 2 * 60 * 60 * 1000;
-const NEXT = { OPEN_GROUP: ['OPEN_AD'], OPEN_AD: ['VERIFY_AD', 'OPEN_EDITOR'], VERIFY_AD: ['OPEN_EDITOR'] };
+const NEXT = { RENAME_PLAN: ['OPEN_GROUP'], OPEN_GROUP: ['OPEN_AD'], OPEN_AD: ['VERIFY_AD', 'OPEN_EDITOR'], VERIFY_AD: ['OPEN_EDITOR'] };
 
 function key(tabId) { return `${PREFIX}${tabId}`; }
 function valid(t) { return t && Date.now() - t.updatedAt < TTL; }
@@ -35,11 +35,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case 'LOVE_WORKFLOW_GET':
         return { ok: true, task: old };
       case 'LOVE_WORKFLOW_START': {
-        if (sender.url && !/^https:\/\/ad\.vivo\.com\.cn\/marketing\/promotion\/plan\/?(?:[?#]|$)/.test(sender.url)) {
-          throw new Error('只能在广告计划列表中启动。');
+        // Vivo is an SPA. After client-side navigation, the browser-provided
+        // sender.url may still describe the original document URL rather than
+        // the *current* route shown in location.pathname. Keep origin/frame
+        // checks, but validate the live route reported by our own content script.
+        const sourceUrl = sender.url || sender.tab?.url || '';
+        let sourceOrigin = '';
+        try { sourceOrigin = new URL(sourceUrl).origin; } catch (_) {}
+        if (sourceOrigin !== 'https://ad.vivo.com.cn') {
+          throw new Error('只能从 vivo 营销平台启动。');
+        }
+        if (sender.frameId != null && sender.frameId !== 0) {
+          throw new Error('请在广告计划主页面启动，不支持内嵌框架。');
+        }
+        const currentPath = String(message.currentPath || '').replace(/\/+$/, '');
+        if (currentPath !== '/marketing/promotion/plan') {
+          throw new Error('只能在广告计划列表中启动（当前页面路径不匹配）。');
+        }
+        // Extra consistency check: the page URL and route must describe the
+        // same current page, even if sender.url points to a stale SPA route.
+        let currentPage;
+        try { currentPage = new URL(String(message.currentPageUrl || '')); } catch (_) {}
+        if (!currentPage || currentPage.origin !== sourceOrigin ||
+            currentPage.pathname.replace(/\/+$/, '') !== currentPath) {
+          throw new Error('当前页面地址发生变化，请在广告计划列表重新右键启动。');
         }
         const name = String(message.name || '').trim();
+        const originalName = String(message.originalName || '').trim();
         if (!name || name.length > 200) throw new Error('计划名称为空或超过 200 字。');
+        if (!originalName || originalName.length > 200) throw new Error('原计划名称无效，请重新在原始计划标题上右键。');
         if (old?.status === 'running') throw new Error('已有任务正在执行，请先停止。');
         const appName = String(message.appName || '').trim();
         const appSubtitle = String(message.appSubtitle || '').trim();
@@ -50,14 +74,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (appName.length > 500 || appSubtitle.length > 500) throw new Error('文案长度超过限制。');
         const task = {
           id: `${Date.now()}-${tabId}-${Math.random().toString(36).slice(2, 9)}`,
-          name,
+          name, originalName,
           appName, appSubtitle, mediaKind, fileCount,
           autoUpload: fileCount > 0 || !!appName || !!appSubtitle,
           status: 'running',
-          step: 'OPEN_GROUP',
+          step: 'RENAME_PLAN',
           startedAt: Date.now(),
           updatedAt: Date.now(),
-          planUrl: sender.url
+          planUrl: currentPage.href
         };
         await save(tabId, task);
         return { ok: true, task };

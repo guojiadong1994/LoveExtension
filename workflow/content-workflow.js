@@ -1,5 +1,5 @@
 /*
- * LoveExtension V1.3.5: existing navigation plus optional automatic legacy upload.
+ * LoveExtension V1.3.11: verified per-creative text-only updates; navigation/upload unchanged.
  * Pure addition: no changes to content.js, style.css or the existing upload logic.
  */
 (() => {
@@ -15,8 +15,9 @@
     if (/^\/marketing\/ads\/edit\/\d+\/\d+$/.test(path())) return 'editor';
     return 'other';
   };
-  const STAGE_FROM_STEP = { OPEN_GROUP: 'group', OPEN_AD: 'ad', VERIFY_AD: 'ad', OPEN_EDITOR: 'ad', UPLOAD_READY: 'editor', UPLOADING: 'editor' };
+  const STAGE_FROM_STEP = { RENAME_PLAN: 'plan', OPEN_GROUP: 'group', OPEN_AD: 'ad', VERIFY_AD: 'ad', OPEN_EDITOR: 'ad', UPLOAD_READY: 'editor', UPLOADING: 'editor' };
   const STEPS = {
+    RENAME_PLAN: '修改所选广告计划名称',
     OPEN_GROUP: '进入广告组并同步名称',
     OPEN_AD: '进入广告并同步名称',
     VERIFY_AD: '刷新后校验广告名称',
@@ -69,6 +70,27 @@
       .wf-input { display:block; width:100%; padding:9px 10px; background:white; color:#30394a; border:1px solid #dce2f0; border-radius:8px; font-size:13px; font-family:inherit; }
       .wf-input:focus { outline:1px solid #415fff; }
       .wf-file-info { margin-top:5px; font-size:12px; color:#6e7b91; overflow-wrap:anywhere; }
+      /* Media selector: generous clickable target when empty, compact selection card when filled. */
+      .wf-media-help { color:#8790a3; font-size:12px; margin:0 0 5px; }
+      .wf-media-zone { display:flex; width:100%; flex-direction:column; justify-content:center; align-items:center; min-height:105px; padding:15px 12px; margin-top:7px; border:1.5px dashed #b6c6f0; border-radius:10px; background:#f8faff; }
+      button.wf-media-picker { color:#415fff; text-align:center; cursor:pointer; transition:background-color .15s,border-color .15s,box-shadow .15s; }
+      button.wf-media-picker:hover { background:#eff3ff; border-color:#415fff; box-shadow:0 0 0 2px rgba(65,95,255,.07); }
+      button.wf-media-picker:focus-visible { outline:2px solid #415fff; outline-offset:2px; }
+      .wf-media-plus { display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%; background:#e8eeff; font-size:24px; font-weight:500; line-height:1; margin-bottom:5px; }
+      .wf-media-main { display:block; font-size:14px; font-weight:650; line-height:1.6; }
+      .wf-media-sub { display:block; font-size:12px; color:#7b879e; margin-top:2px; line-height:1.5; }
+      .wf-media-selected { align-items:stretch; justify-content:flex-start; min-height:105px; padding:13px 14px; background:#f7f9ff; }
+      .wf-media-selected-head { display:flex; align-items:center; gap:8px; color:#354a76; font-weight:650; font-size:13px; }
+      .wf-media-selected-mark { flex:none; display:flex; align-items:center; justify-content:center; width:23px; height:23px; border-radius:50%; background:#e2f3ea; color:#218253; font-size:14px; }
+      .wf-media-filenames { display:block; margin-top:6px; font-size:12px; color:#6f7d95; overflow-wrap:anywhere; line-height:1.5; }
+      .wf-media-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:9px; }
+      button.wf-media-repick, button.wf-media-clear { padding:5px 11px; font-size:12px; line-height:1.4; }
+      button.wf-media-repick { color:#415fff; background:white; border-color:#bdc9fa; }
+      button.wf-media-repick:hover { background:#eef2ff; border-color:#415fff; }
+      button.wf-media-clear { color:#68758b; background:transparent; border-color:#dce2ed; }
+      button.wf-media-clear:hover { background:white; border-color:#9da9be; }
+      .wf-media-error { color:#c03832; font-size:12px; line-height:1.6; margin-top:5px; overflow-wrap:anywhere; }
+      .wf-media-error:empty { display:none; }
       .wf-choice-tip { padding:9px 10px; background:#f7f9fd; border-radius:7px; color:#728097; font-size:12px; }
       .wf-scroll { max-height:65vh; overflow-y:auto; }
       .field-error { color:#b33530; font-size:12px; margin:2px 0 8px; }
@@ -150,7 +172,7 @@
     const actions = document.createElement('div');
     actions.className = 'progress-actions';
     button(actions, '复制错误', () => {
-      const detail = `LoveExtension V1.3.5\n页面：${location.pathname}\n步骤：${task.step}\n计划：${task.name}\n错误：${task.error || ''}`;
+      const detail = `LoveExtension V1.3.11\n页面：${location.pathname}\n步骤：${task.step}\n计划：${task.name}\n错误：${task.error || ''}`;
       if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(detail).catch(() => window.prompt('复制以下错误信息', detail));
       } else {
@@ -267,7 +289,7 @@
       nameInput.setAttribute('aria-label', '广告计划名称（可修改）');
       nameInput.placeholder = '请输入最终需要同步的广告计划名称';
       body.appendChild(nameInput);
-      textDiv(body, '以下名称只用于同步广告组、广告，不会再次修改计划名称。', 'small');
+      textDiv(body, '这个名称将同步到广告计划、广告组和广告；名称未变化时会跳过计划改名。', 'small');
 
       const mediaLabel = document.createElement('label');
       mediaLabel.className = 'wf-label';
@@ -276,15 +298,26 @@
       let chosenHandles = [];
       let chosenDescriptions = [];
       let chosenKind = '';
-      const fileInfo = textDiv(body, '未选择素材；可以只修改文案，也可以仅同步名称。', 'wf-file-info');
-      const picker = button(body, '选择图片 / 视频文件', async () => {
-        fileInfo.textContent = '正在打开文件选择器…';
+      textDiv(body, '未选择素材时，可只修改名称或文案。', 'wf-media-help');
+      const mediaArea = document.createElement('div');
+      body.appendChild(mediaArea);
+      const mediaError = textDiv(body, '', 'wf-media-error');
+      mediaError.setAttribute('role', 'alert');
+      let pickerBusy = false;
+
+      // A user click directly invokes Chrome's file-handle picker. Never load
+      // image/video bytes or fall back to an input[type=file] or Blob storage.
+      async function chooseMedia() {
+        if (pickerBusy) return;
         if (typeof window.showOpenFilePicker !== 'function') {
-          fileInfo.textContent = '此浏览器或页面不支持文件句柄选择器，请使用新版 Chrome。不会回退到复制视频的旧方式。';
+          mediaError.textContent = '当前浏览器不支持文件句柄选择，请使用新版 Chrome。';
           return;
         }
+        pickerBusy = true;
+        mediaError.textContent = '';
+        renderMediaSelection();
         try {
-          // This call MUST precede any await, to preserve the user gesture.
+          // Must be invoked before the first await to retain user activation.
           const handles = await window.showOpenFilePicker({
             id: 'love-workflow-media',
             multiple: true,
@@ -297,44 +330,89 @@
             }]
           });
           if (!handles?.length) return;
-          if (handles.length > 10) throw new Error('一次最多选择 10 个素材。');
-          // getFile() here obtains only a lazy file reference and its metadata;
-          // it does NOT read video/image bytes or persist copies.
-          const descriptions = await Promise.all(handles.map(async h => {
-            const f = await h.getFile();
-            return { name: f.name, type: f.type, size: f.size, lastModified: f.lastModified };
+          if (handles.length > 10) throw new Error('最多选择10个素材，请减少数量后重试。');
+          // getFile() returns the original file with metadata; the extension
+          // persists handles only, not the underlying media bytes.
+          const descriptions = await Promise.all(handles.map(async handle => {
+            const file = await handle.getFile();
+            return { name: file.name, type: file.type, size: file.size, lastModified: file.lastModified };
           }));
           const kind = selectedMediaKind(descriptions);
-          if (!kind) throw new Error('请只选择图片或只选择视频，不能混选。');
+          if (!kind) throw new Error('图片和视频不能混选；请选择同一种类型的素材。');
           chosenHandles = handles;
           chosenDescriptions = descriptions;
           chosenKind = kind;
-          fileInfo.textContent = `${handles.length} 个${kind === 'image' ? '图片' : '视频'}文件 · ${descriptions.map(d => d.name).slice(0, 3).join('、')}${handles.length > 3 ? '……' : ''}（仅保留文件句柄）`;
+          mediaError.textContent = '';
           nameError.textContent = '';
-        } catch (err) {
-          if (err?.name !== 'AbortError') {
-            fileInfo.textContent = `选择失败：${err?.message || err}`;
-          } else {
-            fileInfo.textContent = chosenHandles.length
-              ? `已保留之前选择的 ${chosenHandles.length} 个文件句柄`
-              : '未选择素材；可以只修改文案，也可以仅同步名称。';
+        } catch (error) {
+          // Cancelling or failing to reselect does not discard previous handles.
+          if (error?.name !== 'AbortError') {
+            mediaError.textContent = `选择失败：${error?.message || error}`;
           }
+        } finally {
+          pickerBusy = false;
+          renderMediaSelection();
         }
-      }, 'wf-picker');
-      picker.type = 'button';
-      picker.style.width = '100%';
-      picker.style.textAlign = 'left';
-      const clearFiles = button(body, '清除已选素材', () => {
-        chosenHandles = [];
-        chosenDescriptions = [];
-        chosenKind = '';
-        fileInfo.textContent = '未选择素材；可以只修改文案，也可以仅同步名称。';
-        nameError.textContent = '';
-      });
-      clearFiles.type = 'button';
-      clearFiles.style.padding = '4px 9px';
-      clearFiles.style.fontSize = '12px';
-      clearFiles.style.marginTop = '5px';
+      }
+
+      function renderMediaSelection() {
+        mediaArea.replaceChildren();
+        if (!chosenHandles.length) {
+          const picker = document.createElement('button');
+          picker.type = 'button';
+          picker.className = 'wf-media-zone wf-media-picker';
+          picker.disabled = pickerBusy;
+          picker.setAttribute('aria-label', '点击选择图片或视频素材');
+          const plus = document.createElement('span');
+          plus.className = 'wf-media-plus';
+          plus.textContent = '+';
+          plus.setAttribute('aria-hidden', 'true');
+          const main = document.createElement('span');
+          main.className = 'wf-media-main';
+          main.textContent = pickerBusy ? '正在打开文件选择器…' : '选择素材';
+          const sub = document.createElement('span');
+          sub.className = 'wf-media-sub';
+          sub.textContent = '点击选择图片或视频文件 · 最多10个，不能混选';
+          picker.append(plus, main, sub);
+          picker.addEventListener('click', chooseMedia);
+          mediaArea.appendChild(picker);
+          return;
+        }
+        const card = document.createElement('div');
+        card.className = 'wf-media-zone wf-media-selected';
+        const title = document.createElement('div');
+        title.className = 'wf-media-selected-head';
+        const tick = document.createElement('span');
+        tick.className = 'wf-media-selected-mark';
+        tick.textContent = '✓';
+        tick.setAttribute('aria-hidden', 'true');
+        const summary = document.createElement('span');
+        summary.textContent = `已选 ${chosenHandles.length} ${chosenKind === 'image' ? '张图片' : '个视频'}`;
+        title.append(tick, summary);
+        const filenames = document.createElement('div');
+        filenames.className = 'wf-media-filenames';
+        filenames.textContent = chosenDescriptions.slice(0, 3).map(item => item.name).join('、') +
+          (chosenDescriptions.length > 3 ? '……' : '');
+        filenames.title = chosenDescriptions.map(item => item.name).join('、');
+        const actions = document.createElement('div');
+        actions.className = 'wf-media-actions';
+        const repick = button(actions, pickerBusy ? '正在选择…' : '重新选择', chooseMedia, 'wf-media-repick');
+        repick.type = 'button';
+        repick.disabled = pickerBusy;
+        const clear = button(actions, '清除素材', () => {
+          chosenHandles = [];
+          chosenDescriptions = [];
+          chosenKind = '';
+          mediaError.textContent = '';
+          nameError.textContent = '';
+          renderMediaSelection();
+        }, 'wf-media-clear');
+        clear.type = 'button';
+        clear.disabled = pickerBusy;
+        card.append(title, filenames, actions);
+        mediaArea.appendChild(card);
+      }
+      renderMediaSelection();
       const appLabel = document.createElement('label'); appLabel.className = 'wf-label'; appLabel.textContent = '标题 / 应用名称（可选）'; body.appendChild(appLabel);
       const appName = document.createElement('input'); appName.className = 'wf-input'; appName.type = 'text'; appName.maxLength = 200; appName.placeholder = '填写给所有目标创意的应用名称'; appName.autocomplete = 'off'; body.appendChild(appName);
       const subtitleLabel = document.createElement('label'); subtitleLabel.className = 'wf-label'; subtitleLabel.textContent = '应用副标题（可选）'; body.appendChild(subtitleLabel);
@@ -357,24 +435,53 @@
         const subtitle = appSubtitle.value.trim();
         start.disabled = true;
         start.textContent = handles.length ? '保存文件句柄中…' : '启动中…';
+        // The main interval must not start RENAME_PLAN while this start button
+        // is still saving handles or renaming the selected row.
+        inFlight = true;
         try {
-          // A corrected target name never changes the selected plan-row identity.
+          // Keep the ORIGINAL right-clicked row as the target, even when the
+          // operator changes the text in the name input.
+          if (stage() !== 'plan') throw new Error('当前已不在广告计划列表，请返回计划页面重新右键启动。');
           if (!row.isConnected || getName(row, 'plan') !== name || !visible(anchor)) throw new Error('计划行已更新，请重新在标题上右键启动。');
+          // Do not allow a pre-existing different row with the same target
+          // name: if the target row re-renders, a text-only fallback becomes
+          // ambiguous and could navigate to the wrong campaign.
+          if (finalName !== name && rows('plan').some(item => item.name === finalName && item.row !== row)) {
+            throw new Error('列表中已存在同名的其他广告计划，请换一个名称再启动，以避免改错计划。');
+          }
           const task = await api('START', {
-            name: finalName, appName: title, appSubtitle: subtitle,
+            currentPath: path(), currentPageUrl: location.href,
+            originalName: name, name: finalName,
+            appName: title, appSubtitle: subtitle,
             mediaKind: kind, fileCount: handles.length
           });
           knownTask = task;
           if (handles.length) await LoveWorkflowMediaStore.put(task.id, handles, descriptions, kind);
           if (!row.isConnected || getName(row, 'plan') !== name) throw new Error('保存文件句柄期间计划列表发生变化，请重新启动。');
-          if ((await api('GET'))?.status !== 'running') throw new Error('任务已停止');
+          await isTaskRunning(task.id);
           clearModal();
-          renderProgress(task);
-          clickName(row, 'plan');
+          // The name dialog is identical in structure to group/ad dialogs,
+          // but its heading is 「修改计划」 and needs its own matching rule.
+          const selected = { row, name };
+          const updated = finalName === name ? selected : await rename(selected, 'plan', finalName);
+          await isTaskRunning(task.id);
+          // If the Vue table replaced the row, only accept an unambiguous,
+          // visible row with the new name before clicking through to groups.
+          const destination = updated.row?.isConnected && getName(updated.row, 'plan') === finalName
+            ? updated
+            : await waitFor(() => {
+                const matches = rows('plan').filter(item => item.name === finalName);
+                return matches.length === 1 ? matches[0] : null;
+              }, '修改后计划名称对应的记录', 7000);
+          const progressed = await advance(task, 'RENAME_PLAN', 'OPEN_GROUP');
+          renderProgress(progressed);
+          clickName(destination.row, 'plan');
           await waitForPage('group');
         } catch (err) {
           if (knownTask?.status === 'running') await fail(err);
           else { start.disabled = false; start.textContent = '开始自动处理'; nameError.textContent = `启动失败：${err.message}`; }
+        } finally {
+          inFlight = false;
         }
       }, 'primary');
     });
@@ -449,7 +556,8 @@
     return parent?.querySelector('.icon-wrap .icon-edit, .icon-edit, [class*="icon-edit"]') || null;
   }
   function nameDialogs(kind) {
-    const expected = kind === 'ad' ? /修改.*广告名称|修改名称/ : /修改.*(广告组)?名称/;
+    const expected = kind === 'plan' ? /修改计划(?:名称)?|修改计划名/
+      : kind === 'ad' ? /修改.*广告名称|修改名称/ : /修改.*(广告组)?名称/;
     return [...document.querySelectorAll('.ep-dialog, .el-dialog')].filter(el => {
       const title = clean(el.getAttribute('aria-label') || el.querySelector('.ep-dialog__title, .el-dialog__title')?.textContent);
       return visible(el) && expected.test(title) && el.querySelector('input.ep-input__inner, input.el-input__inner');
@@ -722,6 +830,230 @@
     });
   }
 
+  // V1.3.10: Read *real* creative tab nodes. Vivo tabs frequently contain a
+  // close icon ("创意1 ×"), so the legacy /^创意(\d+)$/ parser may report zero
+  // even when the editor clearly has ten existing creatives.
+  function existingCreativeTabs() {
+    const tabs = new Map();
+    for (const tab of document.querySelectorAll('.ep-tabs__item, .el-tabs__item, [role="tab"]')) {
+      if (!visible(tab)) continue;
+      const value = clean(tab.innerText || tab.textContent || '').replace(/[\u200b-\u200d\ufeff]/g, '');
+      const match = /^创意\s*(\d+)\s*(?:[×xX])?\s*$/.exec(value);
+      if (!match) continue;
+      const index = Number(match[1]);
+      if (index >= 1 && index <= 10 && !tabs.has(index)) tabs.set(index, tab);
+    }
+    return tabs;
+  }
+
+  function declaredEditorCreativeCount() {
+    const value = clean(document.body?.innerText || '');
+    const match = /创意个数\s*[:：]?\s*(\d+)\s*\/\s*10/.exec(value);
+    return match ? Number(match[1]) : null;
+  }
+
+  // V1.3.10: A first-render "0/10" means *unknown*, not "empty".
+  // The editor often renders its count before its creative tabs and form fields.
+  // Media+text jobs already spend time waiting for creative-type selection; the
+  // text-only path must get the same reliable readiness barrier.
+  async function waitForEditorCreativeState(options = {}) {
+    const maxWaitMs = options.maxWaitMs ?? 30000;
+    const minBlankWaitMs = options.minBlankWaitMs ?? 22000;
+    const positiveStableMs = options.positiveStableMs ?? 900;
+    const start = Date.now();
+    let positiveSignature = '';
+    let positiveSince = 0;
+    let blankSince = 0;
+    let lastCount = null;
+    let lastTabs = 0;
+    let lastLoading = false;
+    while (Date.now() - start < maxWaitMs) {
+      if (knownTask?.status === 'stopped') throw new Error('任务已停止');
+      const tabs = existingCreativeTabs();
+      const declaredCount = declaredEditorCreativeCount();
+      const elapsed = Date.now() - start;
+      // Do not count temporary skeleton or loading overlays as a settled UI.
+      const loading = [...document.querySelectorAll(
+        '.ep-loading-mask, .el-loading-mask, .ep-skeleton, .el-skeleton, [aria-busy="true"]'
+      )].some(visible);
+      const editorVisible = /创意类型/.test(document.body?.innerText || '') &&
+        /上传创意|创意个数|添加创意/.test(document.body?.innerText || '');
+      lastCount = declaredCount;
+      lastTabs = tabs.size;
+      lastLoading = loading;
+
+      // Visible creative tabs are positive evidence, even if a stale counter
+      // temporarily says 0/10. Wait for count reconciliation if possible.
+      // A stable set of visible tabs can also be accepted after 6 seconds if
+      // the counter stays stale, but a contradictory positive count cannot.
+      const countAgrees = declaredCount === null || declaredCount === tabs.size ||
+        (declaredCount === 0 && elapsed >= 6000);
+      const indexes = [...tabs.keys()].sort((a, b) => a - b);
+      const validTabs = indexes.length > 0 && indexes.every((n, i) => n === i + 1);
+      if (editorVisible && !loading && validTabs && countAgrees) {
+        const signature = indexes.join(',') + ':' + declaredCount;
+        if (signature !== positiveSignature) {
+          positiveSignature = signature;
+          positiveSince = Date.now();
+        }
+        if (Date.now() - positiveSince >= positiveStableMs) {
+          return { count: tabs.size, tabs, blank: false };
+        }
+      } else {
+        positiveSignature = '';
+        positiveSince = 0;
+      }
+
+      // Never classify the editor as empty on the first 0/10 frame.
+      // A genuine blank editor must keep displaying 0/10 with no tabs after a
+      // substantial wait and with no visible loading overlay. Existing fields
+      // are another indication that the editor is still resolving its state.
+      const visibleCreativeText = [...document.querySelectorAll('input, textarea')].some(input =>
+        visible(input) && /应用名称|应用副标题|创意标题|创意副标题/.test(
+          (input.getAttribute('placeholder') || '') + ' ' +
+          (input.closest('.ep-form-item, .el-form-item')?.textContent || '')
+        )
+      );
+      const definitelyZero = editorVisible && !loading && declaredCount === 0 &&
+        tabs.size === 0 && !visibleCreativeText;
+      if (definitelyZero) {
+        if (!blankSince) blankSince = Date.now();
+        if (elapsed >= minBlankWaitMs && Date.now() - blankSince >= minBlankWaitMs - 1500) {
+          return { count: 0, tabs, blank: true };
+        }
+      } else {
+        blankSince = 0;
+      }
+      await pause(200);
+    }
+    // Ambiguous DOM should never be mislabeled as a genuinely empty ad.
+    throw new Error(`无法确认创意区域加载完成（读取数量：${lastCount === null ? '未知' : lastCount}/10；` +
+      `已识别标签：${lastTabs}；加载遮罩：${lastLoading ? '有' : '无'}）。` +
+      '请确认广告编辑页面已完整显示创意，再重新启动；不会修改已有素材。');
+  }
+
+  // V1.3.11: Do not infer the selected creative from the existence of text
+  // inputs: every creative has the same field labels. Verify the actual tab.
+  function creativeTabIsActive(tab) {
+    if (!tab || !visible(tab)) return false;
+    if (tab.getAttribute('aria-selected') === 'true' ||
+        tab.getAttribute('data-state') === 'active') return true;
+    return ['is-active', 'active', 'ep-tabs__item--active', 'el-tabs__item--active']
+      .some(name => tab.classList?.contains(name));
+  }
+
+  function editorTextField(root, kind) {
+    if (typeof findCreativeTextInput !== 'function') return null;
+    return kind === 'title'
+      ? (findCreativeTextInput(root, ['应用名称'], ['请输入应用名称', '应用名称']) ||
+         findCreativeTextInput(root, ['创意标题'], ['请输入创意标题', '创意标题']))
+      : (findCreativeTextInput(root, ['应用副标题'], ['请输入应用副标题', '应用副标题']) ||
+         findCreativeTextInput(root, ['创意副标题'], ['请输入创意副标题', '创意副标题']));
+  }
+
+  function editorFieldsReady(root, task) {
+    if (!root || !visible(root)) return false;
+    if (task.appName && !editorTextField(root, 'title')) return false;
+    if (task.appSubtitle && !editorTextField(root, 'subtitle')) return false;
+    return true;
+  }
+
+  // A linked tabpanel is proof of which creative owns the fields. If that
+  // panel is still hidden after the click, DO NOT fall back to creative1.
+  function editorPaneForTab(tab, task) {
+    if (!creativeTabIsActive(tab)) return null;
+    const paneId = tab.getAttribute('aria-controls') ||
+      (tab.id?.startsWith('tab-') ? `pane-${tab.id.slice(4)}` : '');
+    if (paneId) {
+      const pane = document.getElementById(paneId);
+      return editorFieldsReady(pane, task) ? pane : null;
+    }
+
+    // Vivo can also render a shared editor form without aria-controls. Only
+    // accept a unique *visible* leaf panel once the tab reports active.
+    const candidates = [...document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [role="tabpanel"]')]
+      .filter(pane => editorFieldsReady(pane, task));
+    const leaves = candidates.filter(pane => !candidates.some(other =>
+      other !== pane && pane.contains(other)));
+    return leaves.length === 1 ? leaves[0] : null;
+  }
+
+  async function activateCreativeEditor(index, task, timeoutMs = 12000) {
+    const tab = existingCreativeTabs().get(index);
+    if (!tab) throw new Error(`创意${index}标签不存在，停止以免修改错位。`);
+    if (!creativeTabIsActive(tab)) tab.click(); // Never click the close icon.
+
+    // Verify both the selected tab and its actual editor panel. Three
+    // consecutive observations with a settling interval prevent accepting
+    // the previous pane while Vivo is asynchronously switching tabs.
+    let signature = null;
+    let stableFrom = 0;
+    let stableSamples = 0;
+    try {
+      return await waitFor(() => {
+        const tabs = existingCreativeTabs();
+        const current = tabs.get(index);
+        const selected = [...tabs.entries()].filter(([, el]) => creativeTabIsActive(el))
+          .map(([n]) => n);
+        if (!current || !creativeTabIsActive(current) ||
+            selected.length !== 1 || selected[0] !== index) {
+          signature = null;
+          stableSamples = 0;
+          return null;
+        }
+        const pane = editorPaneForTab(current, task);
+        if (!pane) {
+          signature = null;
+          stableSamples = 0;
+          return null;
+        }
+        if (pane !== signature) {
+          signature = pane;
+          stableFrom = Date.now();
+          stableSamples = 1;
+          return null;
+        }
+        stableSamples++;
+        // Wait even when the selected class updates before the data does.
+        if (stableSamples < 3 || Date.now() - stableFrom < 550) return null;
+        return pane;
+      }, `创意${index}标签激活并切换到对应编辑区域`, timeoutMs);
+    } catch (err) {
+      throw new Error(`创意${index}切换失败：${err?.message || err}；为避免重复修改创意1，已停止。`);
+    }
+  }
+
+  async function updateExistingCreativeTextOnly(task, creativeState) {
+    // Keep the legacy input writer; never invoke image/video upload here.
+    if (typeof fillUnifiedTitlePairInCreativeRoot !== 'function') {
+      throw new Error('原有文案填写函数不可用，请刷新广告编辑页重试。');
+    }
+    const indexes = [...creativeState.tabs.keys()].sort((a, b) => a - b);
+    if (!indexes.length) throw new Error('没有确认到现有创意，停止修改文案。');
+
+    for (const index of indexes) {
+      const latest = await api('GET');
+      if (!latest || latest.id !== task.id || latest.status !== 'running' || latest.step !== 'UPLOADING') {
+        throw new Error('任务已停止，文案修改中断。');
+      }
+      const root = await activateCreativeEditor(index, task);
+      const result = fillUnifiedTitlePairInCreativeRoot(root, task.appName || '', task.appSubtitle || '');
+      if (!result?.filled) throw new Error(`创意${index}未找到可填写的文案字段，停止以免跳过创意。`);
+      // Check this creative's visible fields immediately after writing.
+      // No second-pass visits after the last creative.
+      await waitFor(() => {
+        const current = existingCreativeTabs().get(index);
+        if (!creativeTabIsActive(current) || editorPaneForTab(current, task) !== root) return null;
+        const title = task.appName ? editorTextField(root, 'title') : null;
+        const subtitle = task.appSubtitle ? editorTextField(root, 'subtitle') : null;
+        return (!task.appName || title?.value === task.appName) &&
+          (!task.appSubtitle || subtitle?.value === task.appSubtitle);
+      }, `创意${index}文案写入确认`, 3000);
+    }
+
+
+  }
+
   async function runEditorUpload(task) {
     if (stage() !== 'editor' || !task.editHref ||
         new URL(task.editHref).pathname.replace(/\/$/, '') !== location.pathname.replace(/\/$/, '')) {
@@ -804,9 +1136,27 @@
         throw new Error('未确认编辑页创意类型与待上传素材一致，已停止。');
       }
     }
-    if (typeof isLikelyBlankNewAdForCombined === 'function' && isLikelyBlankNewAdForCombined(context) &&
-        (!files.length || !task.appName || !task.appSubtitle)) {
-      throw new Error('当前是空白广告，原有上传功能要求同时提供素材、标题及副标题。');
+    // V1.3.10: Wait for stable evidence before deciding existing vs blank. The old
+    // heuristic can mistake the disabled '添加创意 (10/10)' button for a blank ad.
+    const creativeState = await waitForEditorCreativeState();
+    if (creativeState.blank && (!files.length || !task.appName || !task.appSubtitle)) {
+      throw new Error('页面确认创意个数为 0/10，空白广告需要同时提供素材、标题及副标题。');
+    }
+
+    if (!files.length && (task.appName || task.appSubtitle)) {
+      // Text-only updates need a robust per-tab navigator. Keep content.js and
+      // the original manual one-click uploader byte-for-byte unchanged.
+      const claimed = await api('CLAIM_UPLOAD', { taskId: task.id });
+      knownTask = claimed;
+      renderProgress(claimed);
+      await updateExistingCreativeTextOnly(task, creativeState);
+      const latest = await api('GET');
+      if (latest && latest.id === task.id && latest.status === 'running' && latest.step === 'UPLOADING') {
+        knownTask = await api('FINISH_UPLOAD', { taskId: task.id, success: true });
+        renderProgress(knownTask);
+      }
+      await LoveWorkflowMediaStore.remove(task.id).catch(() => {});
+      return;
     }
 
     // Claim before touching the editor: no automatic retry after reload.
@@ -873,6 +1223,15 @@
       if (task.status !== 'running') return;
       const currentStage = stage();
       if (currentStage !== STAGE_FROM_STEP[task.step]) return;
+      // If the original plan-page content script was destroyed mid-rename,
+      // never click the pencil a second time on an ambiguous refreshed row.
+      // The start-button flow handles RENAME_PLAN when it is still alive.
+      if (task.step === 'RENAME_PLAN') {
+        inFlight = true;
+        try { await fail(new Error('修改广告计划时页面发生刷新或操作中断。请检查计划名称，之后重新右键启动；不会自动重复改名。')); }
+        finally { inFlight = false; }
+        return;
+      }
       // A claimed upload is never automatically repeated on refresh. A new
       // content-script instance means the previous upload was interrupted.
       if (task.step === 'UPLOADING' && !uploadInFlight) {
