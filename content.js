@@ -1466,6 +1466,9 @@ function openCombinedCreativeDialog() {
                 border-radius: 14px !important;
                 box-shadow: 0 14px 42px rgba(0,0,0,0.24) !important;
                 overflow: hidden !important;
+                max-height: calc(100vh - 24px) !important;
+                display: flex !important;
+                flex-direction: column !important;
             }
             #love-combined-modal .love-combined-header {
                 padding: 16px 20px !important;
@@ -1484,7 +1487,7 @@ function openCombinedCreativeDialog() {
                 line-height: 1 !important;
                 user-select: none !important;
             }
-            #love-combined-modal .love-combined-body { padding: 18px 20px 8px !important; }
+            #love-combined-modal .love-combined-body { padding: 18px 20px 8px !important; overflow-y: auto !important; min-height: 0 !important; }
             #love-combined-modal .love-combined-context {
                 margin-bottom: 14px !important;
                 padding: 10px 12px !important;
@@ -1523,7 +1526,35 @@ function openCombinedCreativeDialog() {
                 line-height: 1.55 !important;
                 margin-top: 2px !important;
             }
+            #love-combined-modal .love-combined-preview-zone {
+                display: flex !important; flex-direction: column !important;
+                justify-content: center !important; align-items: center !important;
+                width: 100% !important; min-height: 84px !important;
+                box-sizing: border-box !important; padding: 12px !important;
+                border: 1.5px dashed #b6c6f0 !important; border-radius: 9px !important;
+                background: #f8faff !important; color: #415fff !important;
+                font-size: 13px !important; cursor: pointer !important;
+            }
+            #love-combined-modal .love-combined-preview-zone:hover {
+                border-color: #415fff !important; background: #eef3ff !important;
+            }
+            #love-combined-modal .love-combined-preview-zone:focus-visible {
+                outline: 2px solid #415fff !important; outline-offset: 2px !important;
+            }
+            #love-combined-modal .love-combined-preview-info {
+                margin-top: 7px !important; color: #748096 !important;
+                font-size: 12px !important; line-height: 1.5 !important;
+                overflow-wrap: anywhere !important;
+            }
+            #love-combined-modal .love-combined-preview-actions {
+                display: none; gap: 8px; margin-top: 7px;
+            }
+            #love-combined-modal .love-combined-preview-actions button {
+                font-size: 12px !important; min-width: 72px !important;
+                height: 29px !important; border-radius: 7px !important;
+            }
             #love-combined-modal .love-combined-footer {
+                flex-shrink: 0 !important;
                 padding: 14px 20px 18px !important;
                 display: flex !important;
                 justify-content: flex-end !important;
@@ -1554,6 +1585,17 @@ function openCombinedCreativeDialog() {
                     <label for="love-combined-file">选择${mediaLabel}素材</label>
                     <input id="love-combined-file" type="file" accept="${accept}" multiple>
                     <div class="love-combined-tip">可选。选择素材时会按创意 1、创意 2、创意 3……依次上传；不选择素材时只处理标题。</div>
+                </div>
+                <div class="love-combined-field">
+                    <label>横版预览图（可选，最多10张）</label>
+                    <button type="button" id="love-combined-preview-select" class="love-combined-preview-zone" aria-label="选择最多10张横版预览图">
+                        ＋ 选择横版预览图
+                    </button>
+                    <div id="love-combined-preview-info" class="love-combined-preview-info">仅用于「激励互动＋竖版视频」；按选择顺序对应创意。不选则跳过，规格由 vivo 校验。</div>
+                    <div id="love-combined-preview-actions" class="love-combined-preview-actions">
+                        <button type="button" id="love-combined-preview-reselect">重新选择</button>
+                        <button type="button" id="love-combined-preview-clear">清除素材</button>
+                    </div>
                 </div>
                 <div class="love-combined-field">
                     <label for="love-combined-app-name">标题 / 名称</label>
@@ -1588,14 +1630,86 @@ function openCombinedCreativeDialog() {
 
     disableLoveTextInputHistory([appNameInput, appSubtitleInput]);
 
+    // The floating-ball dialog stays on this page: keep file HANDLES in
+    // memory (not IndexedDB). Files are opened only when the task begins.
+    const previewSelect = overlay.querySelector('#love-combined-preview-select');
+    const previewReselect = overlay.querySelector('#love-combined-preview-reselect');
+    const previewClear = overlay.querySelector('#love-combined-preview-clear');
+    const previewInfo = overlay.querySelector('#love-combined-preview-info');
+    const previewActions = overlay.querySelector('#love-combined-preview-actions');
+    let previewHandles = [];
+    let previewMetas = [];
+    let pickingPreview = false;
+
+    const showPreviewSelection = () => {
+        if (previewHandles.length) {
+            previewSelect.textContent = `✓ 已选择 ${previewHandles.length} 张横版预览图`;
+            previewInfo.textContent = previewMetas.slice(0, 3).map(x => x.name).join('、') +
+                (previewMetas.length > 3 ? '……' : '');
+            previewActions.style.display = 'flex';
+        } else {
+            previewSelect.textContent = '＋ 选择横版预览图';
+            previewInfo.textContent = '仅用于「激励互动＋竖版视频」；不选则跳过。最多10张，按选择顺序对应创意。';
+            previewActions.style.display = 'none';
+        }
+        previewSelect.disabled = pickingPreview;
+        previewReselect.disabled = pickingPreview;
+        previewClear.disabled = pickingPreview;
+    };
+
+    const choosePreviewHandles = async () => {
+        if (pickingPreview) return;
+        if (typeof window.showOpenFilePicker !== 'function') {
+            showToast('当前浏览器不支持文件句柄选择，请使用新版 Chrome。', 5000, '⚠️');
+            return;
+        }
+        pickingPreview = true;
+        showPreviewSelection();
+        try {
+            const handles = await window.showOpenFilePicker({
+                multiple: true,
+                id: 'love-combined-horizontal-preview',
+                types: [{description: '横版预览图（JPG/PNG）', accept: {
+                    'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png']
+                }}]
+            });
+            if (!handles?.length) return;
+            if (handles.length > 10) throw new Error('横版预览图最多选择10张。');
+            const metas = [];
+            for (const handle of handles) {
+                if (handle.kind !== 'file') throw new Error('选择的不是文件。');
+                const file = await handle.getFile();
+                if (!/\.(jpe?g|png)$/i.test(file.name)) throw new Error('横版预览图请选择 JPG/PNG 图片。');
+                metas.push({name:file.name, size:file.size, lastModified:file.lastModified});
+            }
+            previewHandles = handles;
+            previewMetas = metas;
+        } catch (err) {
+            if (err?.name !== 'AbortError') {
+                showToast(`选择横版预览图失败：${err?.message || err}`, 5200, '⚠️');
+            }
+        } finally {
+            pickingPreview = false;
+            showPreviewSelection();
+        }
+    };
+    previewSelect.onclick = choosePreviewHandles;
+    previewReselect.onclick = choosePreviewHandles;
+    previewClear.onclick = () => {
+        previewHandles = [];
+        previewMetas = [];
+        showPreviewSelection();
+    };
+
     confirmBtn.onclick = async () => {
         const files = Array.from(fileInput.files || []).slice(0, LOVE_VIDEO_CONFIG.maxFiles);
         const appName = appNameInput.value.trim();
         const appSubtitle = appSubtitleInput.value.trim();
         const hasMedia = files.length > 0;
         const hasText = !!(appName || appSubtitle);
+        const hasPreview = previewHandles.length > 0;
 
-        if (!hasMedia && !hasText) {
+        if (!hasMedia && !hasText && !hasPreview) {
             showToast('请至少选择素材，或填写标题/副标题', 4500, '⚠️');
             fileInput.focus();
             return;
@@ -1607,12 +1721,37 @@ function openCombinedCreativeDialog() {
             return;
         }
 
-        const blankNewAd = isLikelyBlankNewAdForCombined(context);
+        // A populated editor may expose "添加创意 (10/10)" before the old
+        // blank-ad heuristic settles.  For the new preview-only action,
+        // visible existing creative tabs are stronger evidence of a real ad.
+        const populatedPreviewEditor = hasPreview &&
+            globalThis.LoveHorizontalPreview?.existingIndices().length > 0;
+        const blankNewAd = !populatedPreviewEditor && isLikelyBlankNewAdForCombined(context);
         if (blankNewAd && (!hasMedia || !appName || !appSubtitle)) {
             showToast('当前看起来是新建空白广告，请同时选择素材并填写标题/名称和副标题', 6500, '⚠️');
             if (!hasMedia) fileInput.focus();
             else (!appName ? appNameInput : appSubtitleInput).focus();
             return;
+        }
+
+        // A FileSystemFileHandle gives us the original File lazily; no bytes
+        // are persisted in IndexedDB, session storage or extension storage.
+        const previewFiles = [];
+        if (previewHandles.length) {
+            try {
+                for (let i = 0; i < previewHandles.length; i++) {
+                    const file = await previewHandles[i].getFile();
+                    const meta = previewMetas[i];
+                    if (!meta || file.name !== meta.name ||
+                        file.size !== meta.size || file.lastModified !== meta.lastModified) {
+                        throw new Error(`第${i+1}张横版预览图文件已变化，请重新选择。`);
+                    }
+                    previewFiles.push(file);
+                }
+            } catch (err) {
+                showToast(`无法读取横版预览图：${err?.message || err}`, 5500, '⚠️');
+                return;
+            }
         }
 
         confirmBtn.disabled = true;
@@ -1621,6 +1760,7 @@ function openCombinedCreativeDialog() {
 
         await startCombinedCreativeAutomation({
             files,
+            previewFiles,
             appName,
             appSubtitle,
             hasMedia,
@@ -1833,7 +1973,33 @@ async function startCombinedCreativeAutomation(options) {
 
         const hasMedia = !!options.hasMedia && Array.isArray(options.files) && options.files.length > 0;
         const hasText = !!options.hasText && !!(options.appName || options.appSubtitle);
+        const hasOptionalPreview = Array.isArray(options.previewFiles) && options.previewFiles.length > 0;
+        let previewApplicable = false;
+        if (hasOptionalPreview) {
+            // Only this new option asks the selected-format detector to wait.
+            // Existing manual image/video/text flows remain unchanged.
+            if (!globalThis.LoveHorizontalPreview) throw new Error('横版预览图模块没有加载，请刷新广告编辑页。');
+            const previewContext = await LoveHorizontalPreview.resolveContext({checkRunning: assertLoveCombinedNotCancelled});
+            previewApplicable = previewContext.applicable;
+            if (previewApplicable) {
+                // Tell the legacy video uploader to SKIP third-frame generation
+                // for the special vertical incentive creative.
+                options.displayType = previewContext.context.displayType;
+                options.creativeType = previewContext.context.creativeType;
+            } else if (!hasMedia && !hasText) {
+                throw new Error('当前创意类型不适用横版预览图：该图片仅用于「激励互动＋竖版视频」。');
+            }
+        }
         const mediaCount = hasMedia ? options.files.length : 0;
+        // Count validation is only relevant to the special incentive/vertical
+        // creative; other formats ignore additional preview selection.
+        if (previewApplicable && hasMedia && mediaCount !== options.previewFiles.length) {
+            throw new Error(`激励互动竖版视频必须一段视频对应一张横版预览图：已选${mediaCount}个视频、${options.previewFiles.length}张图片；尚未开始替换。`);
+        }
+        if (previewApplicable && !hasMedia &&
+            options.previewFiles.length > LoveHorizontalPreview.existingIndices().length) {
+            throw new Error(`横版预览图数量超过现有创意数量（${LoveHorizontalPreview.existingIndices().length}），尚未修改。`);
+        }
         const textTargetCount = hasMedia ? mediaCount : Math.max(1, options.targetCount || getCombinedCreativeIndices().length || 1);
 
         if (hasMedia) {
@@ -1846,6 +2012,18 @@ async function startCombinedCreativeAutomation(options) {
             } else {
                 throw new Error('未能识别素材类型，请先选择图片或视频素材');
             }
+        }
+
+        if (previewApplicable && hasOptionalPreview) {
+            const indexes = hasMedia
+                ? Array.from({length: mediaCount}, (_, i) => i + 1)
+                : LoveHorizontalPreview.existingIndices().slice(0, options.previewFiles.length);
+            await LoveHorizontalPreview.replace({
+                files: options.previewFiles,
+                indexes,
+                activate: index => LoveHorizontalPreview.activateManual(index),
+                checkRunning: assertLoveCombinedNotCancelled
+            });
         }
 
         if (hasText) {

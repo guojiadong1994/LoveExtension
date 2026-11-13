@@ -71,12 +71,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const fileCount = Number(message.fileCount || 0);
         if (!Number.isInteger(fileCount) || fileCount < 0 || fileCount > 10) throw new Error('素材数量必须在 0 到 10 之间。');
         if (fileCount && !['image', 'video'].includes(mediaKind)) throw new Error('所选素材类型不正确。');
+        const previewCount = Number(message.previewCount || 0);
+        if (!Number.isInteger(previewCount) || previewCount < 0 || previewCount > 10) {
+          throw new Error('横版预览图最多选择10张。');
+        }
         if (appName.length > 500 || appSubtitle.length > 500) throw new Error('文案长度超过限制。');
         const task = {
           id: `${Date.now()}-${tabId}-${Math.random().toString(36).slice(2, 9)}`,
           name, originalName,
-          appName, appSubtitle, mediaKind, fileCount,
-          autoUpload: fileCount > 0 || !!appName || !!appSubtitle,
+          appName, appSubtitle, mediaKind, fileCount, previewCount,
+          autoUpload: fileCount > 0 || previewCount > 0 || !!appName || !!appSubtitle,
           status: 'running',
           step: 'RENAME_PLAN',
           startedAt: Date.now(),

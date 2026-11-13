@@ -100,6 +100,60 @@
     }
   }
 
+  async function putPreview(taskId, handles, descriptions) {
+    if (!taskId || !Array.isArray(handles) || !handles.length || handles.length > 10 ||
+        !Array.isArray(descriptions) || descriptions.length !== handles.length ||
+        handles.some(h => !isHandle(h)) || descriptions.some(d => !d ||
+          !/\.(jpe?g|png)$/i.test(d.name || '') ||
+          !Number.isFinite(d.size) || !Number.isFinite(d.lastModified))) {
+      throw new Error('横版预览图句柄或文件信息无效，最多选择10张 JPG/PNG 图片。');
+    }
+    const existing = await transaction('readonly', store => store.get(taskId));
+    const base = existing && existing.format === 'file-handles-v1' ? existing : {
+      id:taskId, format:'file-handles-v1', handles:[], descriptions:[], expectedKind:''
+    };
+    // Store ONLY structured-cloneable handles and small metadata; no File/Blob.
+    await transaction('readwrite', store => store.put({
+      ...base,
+      previewHandles:handles,
+      previewDescriptions:descriptions.map(d => ({
+        name:d.name, type:d.type || '', size:d.size, lastModified:d.lastModified
+      })),
+      savedAt:Date.now()
+    }));
+    const check = await record(taskId);
+    if (!check || !Array.isArray(check.previewHandles) || check.previewHandles.length !== handles.length ||
+        check.previewHandles.some((h,i) => h.name !== handles[i].name)) {
+      throw new Error('横版预览图句柄保存校验失败。');
+    }
+  }
+
+  async function getPreview(taskId) {
+    const entry = await record(taskId);
+    if (!entry?.previewHandles?.length || !Array.isArray(entry.previewDescriptions) ||
+        entry.previewHandles.length !== entry.previewDescriptions.length) return [];
+    const files = [];
+    for (let i = 0; i < entry.previewHandles.length; i++) {
+      const handle = entry.previewHandles[i];
+      const meta = entry.previewDescriptions[i];
+      if (!isHandle(handle)) throw new Error(`第${i+1}张横版预览图句柄已失效。`);
+      if (typeof handle.queryPermission === 'function' &&
+          await handle.queryPermission({mode:'read'}) !== 'granted') throw permissionError();
+      let file;
+      try { file = await handle.getFile(); }
+      catch (err) {
+        if (err?.name === 'NotAllowedError' || err?.name === 'SecurityError') throw permissionError();
+        throw new Error(`第${i+1}张横版预览图原文件无法读取，可能被移动或删除：${err?.message || err}`);
+      }
+      if (file.name !== meta.name || file.size !== meta.size ||
+          file.lastModified !== meta.lastModified || !/\.(jpe?g|png)$/i.test(file.name)) {
+        throw new Error(`第${i+1}张横版预览图原文件发生变化，请重新选择文件。`);
+      }
+      files.push(file);
+    }
+    return files;
+  }
+
   async function record(taskId) {
     if (!taskId) return null;
     const item = await transaction('readonly', store => store.get(taskId));
@@ -195,6 +249,6 @@
   }
 
   globalThis.LoveWorkflowMediaStore = Object.freeze({
-    put, get, record, requestAccess, remove, cleanupExpired, deleteOldBlobDatabase
+    put, get, putPreview, getPreview, record, requestAccess, remove, cleanupExpired, deleteOldBlobDatabase
   });
 })();

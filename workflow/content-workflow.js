@@ -1,6 +1,6 @@
 /*
- * LoveExtension V1.3.11: verified per-creative text-only updates; navigation/upload unchanged.
- * Pure addition: no changes to content.js, style.css or the existing upload logic.
+ * LoveExtension V1.3.15: each creative receives its own optional horizontal preview.
+ * The floating-ball dialog has an additional optional field; legacy upload algorithms remain unchanged.
  */
 (() => {
   'use strict';
@@ -91,6 +91,10 @@
       button.wf-media-clear:hover { background:white; border-color:#9da9be; }
       .wf-media-error { color:#c03832; font-size:12px; line-height:1.6; margin-top:5px; overflow-wrap:anywhere; }
       .wf-media-error:empty { display:none; }
+      .wf-preview-zone { min-height:85px; padding:12px; }
+      .wf-preview-note { color:#8790a3; font-size:12px; margin:5px 0 0; line-height:1.5; }
+      .wf-preview-title { margin-top:14px; }
+
       .wf-choice-tip { padding:9px 10px; background:#f7f9fd; border-radius:7px; color:#728097; font-size:12px; }
       .wf-scroll { max-height:65vh; overflow-y:auto; }
       .field-error { color:#b33530; font-size:12px; margin:2px 0 8px; }
@@ -172,7 +176,7 @@
     const actions = document.createElement('div');
     actions.className = 'progress-actions';
     button(actions, '复制错误', () => {
-      const detail = `LoveExtension V1.3.11\n页面：${location.pathname}\n步骤：${task.step}\n计划：${task.name}\n错误：${task.error || ''}`;
+      const detail = `LoveExtension V1.3.15\n页面：${location.pathname}\n步骤：${task.step}\n计划：${task.name}\n错误：${task.error || ''}`;
       if (navigator.clipboard?.writeText) {
         navigator.clipboard.writeText(detail).catch(() => window.prompt('复制以下错误信息', detail));
       } else {
@@ -413,6 +417,107 @@
         mediaArea.appendChild(card);
       }
       renderMediaSelection();
+
+      // Optional JPG/PNG covers, at most ten. Maintain the picker-returned order:
+      // one distinct cover per target creative; never duplicate the first cover.
+      const previewLabel = document.createElement('label');
+      previewLabel.className = 'wf-label wf-preview-title';
+      previewLabel.textContent = '横版预览图（可选，最多10张）';
+      body.appendChild(previewLabel);
+      const previewArea = document.createElement('div');
+      body.appendChild(previewArea);
+      textDiv(body, '仅用于激励互动的竖版视频创意；选择多张时按显示顺序逐一对应。不选择则跳过，大小由平台校验。', 'wf-preview-note');
+      const previewError = textDiv(body, '', 'wf-media-error');
+      previewError.setAttribute('role', 'alert');
+      let previewHandles = [];
+      let previewDescriptions = [];
+      let previewPickerBusy = false;
+
+      async function chooseHorizontalPreview() {
+        if (previewPickerBusy) return;
+        if (typeof window.showOpenFilePicker !== 'function') {
+          previewError.textContent = '当前浏览器不支持文件句柄选择，请使用新版 Chrome。';
+          return;
+        }
+        previewPickerBusy = true;
+        previewError.textContent = '';
+        renderHorizontalPreview();
+        try {
+          // Keep the picker call in this user-click task (transient activation).
+          const handles = await window.showOpenFilePicker({
+            id: 'love-workflow-horizontal-preview',
+            multiple: true,
+            types: [{ description: '横版预览图片', accept: { 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'] } }]
+          });
+          if (!handles?.length) return;
+          if (handles.length > 10) throw new Error('一次最多选择10张横版预览图。');
+          const descriptions = [];
+          for (const handle of handles) {
+            if (handle.kind !== 'file') throw new Error('选择的不是文件，请重新选择。');
+            const file = await handle.getFile(); // metadata only, no caching
+            if (!/\.(jpe?g|png)$/i.test(file.name)) throw new Error('请选择 JPG、JPEG 或 PNG 图片。');
+            descriptions.push({name:file.name, type:file.type, size:file.size, lastModified:file.lastModified});
+          }
+          // Only replace previous selection after the whole new selection passes.
+          previewHandles = handles;
+          previewDescriptions = descriptions;
+          nameError.textContent = '';
+        } catch (error) {
+          if (error?.name !== 'AbortError') previewError.textContent = `选择失败：${error?.message || error}`;
+        } finally {
+          previewPickerBusy = false;
+          renderHorizontalPreview();
+        }
+      }
+
+      function renderHorizontalPreview() {
+        previewArea.replaceChildren();
+        if (!previewHandles.length) {
+          const picker = document.createElement('button');
+          picker.type = 'button';
+          picker.className = 'wf-media-zone wf-media-picker wf-preview-zone';
+          picker.disabled = previewPickerBusy;
+          picker.setAttribute('aria-label', '点击选择最多10张横版预览图');
+          const plus = document.createElement('span');
+          plus.className = 'wf-media-plus';
+          plus.textContent = '+';
+          const main = document.createElement('span');
+          main.className = 'wf-media-main';
+          main.textContent = previewPickerBusy ? '正在打开文件选择器…' : '选择横版预览图';
+          const sub = document.createElement('span');
+          sub.className = 'wf-media-sub';
+          sub.textContent = '点击选择 JPG / PNG 图片（最多10张）';
+          picker.append(plus, main, sub);
+          picker.addEventListener('click', chooseHorizontalPreview);
+          previewArea.appendChild(picker);
+          return;
+        }
+        const card = document.createElement('div');
+        card.className = 'wf-media-zone wf-media-selected wf-preview-zone';
+        const title = document.createElement('div');
+        title.className = 'wf-media-selected-head';
+        title.textContent = `✓ 已选 ${previewHandles.length} 张横版预览图`;
+        const filenames = document.createElement('div');
+        filenames.className = 'wf-media-filenames';
+        filenames.textContent = previewDescriptions.slice(0, 3).map(d => d.name).join('、') +
+          (previewDescriptions.length > 3 ? '……' : '');
+        const actions = document.createElement('div');
+        actions.className = 'wf-media-actions';
+        const repick = button(actions, previewPickerBusy ? '正在选择…' : '重新选择', chooseHorizontalPreview, 'wf-media-repick');
+        repick.type = 'button';
+        repick.disabled = previewPickerBusy;
+        const clear = button(actions, '清除预览图', () => {
+          previewHandles = [];
+          previewDescriptions = [];
+          previewError.textContent = '';
+          renderHorizontalPreview();
+        }, 'wf-media-clear');
+        clear.type = 'button';
+        clear.disabled = previewPickerBusy;
+        card.append(title, filenames, actions);
+        previewArea.appendChild(card);
+      }
+      renderHorizontalPreview();
       const appLabel = document.createElement('label'); appLabel.className = 'wf-label'; appLabel.textContent = '标题 / 应用名称（可选）'; body.appendChild(appLabel);
       const appName = document.createElement('input'); appName.className = 'wf-input'; appName.type = 'text'; appName.maxLength = 200; appName.placeholder = '填写给所有目标创意的应用名称'; appName.autocomplete = 'off'; body.appendChild(appName);
       const subtitleLabel = document.createElement('label'); subtitleLabel.className = 'wf-label'; subtitleLabel.textContent = '应用副标题（可选）'; body.appendChild(subtitleLabel);
@@ -426,6 +531,8 @@
         const handles = chosenHandles;
         const descriptions = chosenDescriptions;
         const kind = chosenKind;
+        const selectedPreviewHandles = [...previewHandles];
+        const selectedPreviewDescriptions = [...previewDescriptions];
         if (!finalName || finalName.length > 200) {
           nameError.textContent = '计划名称不能为空或超过 200 个字符。'; nameInput.focus(); return;
         }
@@ -453,10 +560,12 @@
             currentPath: path(), currentPageUrl: location.href,
             originalName: name, name: finalName,
             appName: title, appSubtitle: subtitle,
-            mediaKind: kind, fileCount: handles.length
+            mediaKind: kind, fileCount: handles.length,
+            previewCount: selectedPreviewHandles.length
           });
           knownTask = task;
           if (handles.length) await LoveWorkflowMediaStore.put(task.id, handles, descriptions, kind);
+          if (selectedPreviewHandles.length) await LoveWorkflowMediaStore.putPreview(task.id, selectedPreviewHandles, selectedPreviewDescriptions);
           if (!row.isConnected || getName(row, 'plan') !== name) throw new Error('保存文件句柄期间计划列表发生变化，请重新启动。');
           await isTaskRunning(task.id);
           clearModal();
@@ -814,7 +923,9 @@
           try {
             // Initiated directly by user click; requestAccess does not await
             // unrelated operations before requesting permissions.
-            await LoveWorkflowMediaStore.requestAccess(saved.handles);
+            await LoveWorkflowMediaStore.requestAccess([
+              ...saved.handles, ...(saved.previewHandles || [])
+            ]);
             clearModal();
             resolve(true);
           } catch (err) {
@@ -1054,6 +1165,36 @@
 
   }
 
+  // Share preview-type validation and upload mechanics with the floating-ball
+  // "一键素材+文案" entrypoint.  Workflow still owns task state/cancellation.
+  async function resolvePreviewContext(task, initialContext) {
+    if (!task.previewCount) return { applicable: false, context: initialContext };
+    return LoveHorizontalPreview.resolveContext({
+      checkRunning: () => isTaskRunning(task.id)
+    });
+  }
+
+  async function updateHorizontalPreview(task, previewFiles, creativeState, count) {
+    if (!previewFiles?.length) return;
+    const indexes = count > 0
+      ? Array.from({length: count}, (_, i) => i + 1)
+      : [...creativeState.tabs.keys()].sort((a,b) => a-b).slice(0, previewFiles.length);
+    if (indexes.length !== previewFiles.length) {
+      throw new Error(`横版预览图需要与创意一一对应：已有${indexes.length}个可处理创意，选了${previewFiles.length}张图片。`);
+    }
+    beginLoveCombinedTask();
+    try {
+      await LoveHorizontalPreview.replace({
+        files: previewFiles,
+        indexes,
+        activate: index => activateCreativeEditor(index, { appName:'', appSubtitle:'' }),
+        checkRunning: () => isTaskRunning(task.id)
+      });
+    } finally {
+      finishLoveCombinedTask();
+    }
+  }
+
   async function runEditorUpload(task) {
     if (stage() !== 'editor' || !task.editHref ||
         new URL(task.editHref).pathname.replace(/\/$/, '') !== location.pathname.replace(/\/$/, '')) {
@@ -1081,6 +1222,19 @@
     }
     if (task.fileCount && (!files || files.length !== task.fileCount)) {
       throw new Error('跨页面文件句柄恢复失败：句柄可能过期、被清理或来源不匹配；没有复制文件内容，也没有执行上传。');
+    }
+    let previewFiles = [];
+    if (task.previewCount) {
+      try {
+        previewFiles = await LoveWorkflowMediaStore.getPreview(task.id);
+      } catch (err) {
+        if (err?.code !== 'LOVE_HANDLE_PERMISSION') throw err;
+        await recoverFilePermission(task);
+        previewFiles = await LoveWorkflowMediaStore.getPreview(task.id);
+      }
+      if (!previewFiles || previewFiles.length !== task.previewCount) {
+        throw new Error('横版预览图句柄恢复数量不一致，未执行上传。');
+      }
     }
     const detected = files.length ? selectedMediaKind(files) : '';
     if (files.length && detected !== task.mediaKind) {
@@ -1139,17 +1293,30 @@
     // V1.3.10: Wait for stable evidence before deciding existing vs blank. The old
     // heuristic can mistake the disabled '添加创意 (10/10)' button for a blank ad.
     const creativeState = await waitForEditorCreativeState();
+    const previewContext = previewFiles.length ? await resolvePreviewContext(task, context) : {applicable:false, context};
+    // Validate the special-case count BEFORE deleting/replacing any video or preview.
+    // For all other formats the extra covers are ignored without affecting old behavior.
+    if (previewContext.applicable && files.length && previewFiles.length !== files.length) {
+      throw new Error(`激励互动竖版视频要求视频与横版预览图数量一致：已选${files.length}个视频、${previewFiles.length}张图片。未开始上传。`);
+    }
+    if (previewContext.applicable && !files.length && previewFiles.length > creativeState.tabs.size) {
+      throw new Error(`只更换预览图时，已选${previewFiles.length}张，但页面只有${creativeState.tabs.size}个创意；未开始修改。`);
+    }
     if (creativeState.blank && (!files.length || !task.appName || !task.appSubtitle)) {
       throw new Error('页面确认创意个数为 0/10，空白广告需要同时提供素材、标题及副标题。');
     }
 
-    if (!files.length && (task.appName || task.appSubtitle)) {
-      // Text-only updates need a robust per-tab navigator. Keep content.js and
-      // the original manual one-click uploader byte-for-byte unchanged.
+    if (!files.length) {
+      // Text-only and/or optional-preview-only, without activating the legacy
+      // video/third-frame uploader. For other creative types, the optional
+      // preview is ignored (not an error).
       const claimed = await api('CLAIM_UPLOAD', { taskId: task.id });
       knownTask = claimed;
       renderProgress(claimed);
-      await updateExistingCreativeTextOnly(task, creativeState);
+      if (task.appName || task.appSubtitle) await updateExistingCreativeTextOnly(task, creativeState);
+      if (previewContext.applicable && previewFiles.length) {
+        await updateHorizontalPreview(task, previewFiles, creativeState, 0);
+      }
       const latest = await api('GET');
       if (latest && latest.id === task.id && latest.status === 'running' && latest.step === 'UPLOADING') {
         knownTask = await api('FINISH_UPLOAD', { taskId: task.id, success: true });
@@ -1188,6 +1355,9 @@
       return; // stopped via button or another tab, do not revive it
     }
     if (result?.success) {
+      if (previewContext.applicable && previewFiles.length) {
+        await updateHorizontalPreview(task, previewFiles, creativeState, files.length);
+      }
       knownTask = await api('FINISH_UPLOAD', { taskId: task.id, success: true });
     } else {
       knownTask = await api('FINISH_UPLOAD', {
