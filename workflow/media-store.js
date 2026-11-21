@@ -128,6 +128,96 @@
     }
   }
 
+  // V1.3.43: one physical handle group per UI task, reused by every ad plan
+  // inside that task. Preview slots align with videos; null means use the
+  // original extraction path (or skip for vertical incentive creatives).
+  async function putTaskGroups(taskId, groups) {
+    if (!taskId || !Array.isArray(groups) || !groups.length || groups.length > 10)
+      throw new Error('任务素材分组数量无效');
+    const serialized = groups.map((group, taskIndex) => {
+      const {handles, descriptions, expectedKind, previewHandles = [], previewDescriptions = []} = group;
+      if (!Array.isArray(handles) || handles.length > 10 || !Array.isArray(descriptions) ||
+          handles.length !== descriptions.length || handles.some(h => !isHandle(h)) ||
+          !['', 'image', 'video'].includes(expectedKind) ||
+          (expectedKind === '' && handles.length) ||
+          (expectedKind !== '' && !handles.length) ||
+          descriptions.some(d => !d || !d.name || !Number.isFinite(d.size) ||
+            !Number.isFinite(d.lastModified) || fileKind(d) !== expectedKind))
+        throw new Error(`任务${taskIndex + 1}的素材句柄或类型无效`);
+      if (!Array.isArray(previewHandles) || !Array.isArray(previewDescriptions) ||
+          (previewHandles.length && previewHandles.length !== handles.length) ||
+          (previewDescriptions.length && previewDescriptions.length !== handles.length) ||
+          // Images store aligned null placeholders too. Only actual cover
+          // handles require a video group; empty placeholders are harmless.
+          (previewHandles.some(Boolean) && expectedKind !== 'video'))
+        throw new Error(`任务${taskIndex + 1}的预览图对应关系无效`);
+      const covers = handles.map((_, i) => previewHandles[i] || null);
+      const coverMeta = handles.map((_, i) => previewDescriptions[i] || null);
+      if (covers.some((h, i) => (!!h !== !!coverMeta[i]) ||
+          (h && (!isHandle(h) || !/\.(jpe?g|png)$/i.test(coverMeta[i]?.name || '') ||
+            !Number.isFinite(coverMeta[i]?.size) || !Number.isFinite(coverMeta[i]?.lastModified)))))
+        throw new Error(`任务${taskIndex + 1}的预览图文件信息无效`);
+      return {
+        handles, expectedKind,
+        descriptions: descriptions.map(d => ({name:d.name,type:d.type||'',size:d.size,lastModified:d.lastModified})),
+        previewHandles:covers,
+        previewDescriptions:coverMeta.map(d => d ? ({name:d.name,type:d.type||'',size:d.size,lastModified:d.lastModified}) : null)
+      };
+    });
+    try {
+      await transaction('readwrite', store => store.put({
+        id:taskId, format:'file-handles-v1', handles:[], descriptions:[], expectedKind:'',
+        taskGroups:serialized, savedAt:Date.now()
+      }));
+      const restored = await record(taskId);
+      if (!restored || restored.taskGroups?.length !== groups.length ||
+          restored.taskGroups.some((g, i) => g.handles.length !== groups[i].handles.length))
+        throw new Error('按任务保存素材的校验失败');
+    } catch (err) {
+      await remove(taskId).catch(() => {});
+      throw new Error(`保存任务素材句柄失败：${err?.message || err}`);
+    }
+  }
+
+  async function getTaskGroup(taskId, taskIndex) {
+    const item = await record(taskId);
+    const group = item?.taskGroups?.[taskIndex];
+    if (!group || !Number.isInteger(taskIndex) || taskIndex < 0 ||
+        !Array.isArray(group.handles) || !Array.isArray(group.descriptions) ||
+        group.handles.length !== group.descriptions.length ||
+        !Array.isArray(group.previewHandles) || !Array.isArray(group.previewDescriptions) ||
+        group.previewHandles.length !== group.handles.length ||
+        group.previewDescriptions.length !== group.handles.length)
+      throw new Error(`任务${taskIndex + 1}的素材组不存在或已过期，请重新创建任务`);
+    async function restore(handle, meta, kind, label) {
+      if (!isHandle(handle) || !meta) throw new Error(`${label}文件句柄无效`);
+      if (typeof handle.queryPermission === 'function' &&
+          await handle.queryPermission({mode:'read'}) !== 'granted') throw permissionError();
+      let file;
+      try { file = await handle.getFile(); }
+      catch (err) {
+        if (['NotAllowedError','SecurityError'].includes(err?.name)) throw permissionError();
+        throw new Error(`${label}无法读取，可能被移动或删除：${err?.message || err}`);
+      }
+      if (file.name !== meta.name || file.size !== meta.size ||
+          file.lastModified !== meta.lastModified ||
+          (kind === 'preview' ? !/\.(jpe?g|png)$/i.test(file.name) : fileKind(file) !== kind))
+        throw new Error(`${label}原文件发生变化，请重新选择素材`);
+      return file;
+    }
+    const files = [];
+    const previews = [];
+    for (let i = 0; i < group.handles.length; i++) {
+      files.push(await restore(group.handles[i], group.descriptions[i], group.expectedKind,
+        `任务${taskIndex + 1}素材${i + 1}`));
+      previews.push(group.previewHandles[i]
+        ? await restore(group.previewHandles[i], group.previewDescriptions[i], 'preview',
+            `任务${taskIndex + 1}视频${i + 1}预览图`)
+        : null);
+    }
+    return {files, previews, expectedKind:group.expectedKind};
+  }
+
   async function getPreview(taskId) {
     const entry = await record(taskId);
     if (!entry?.previewHandles?.length || !Array.isArray(entry.previewDescriptions) ||
@@ -249,6 +339,7 @@
   }
 
   globalThis.LoveWorkflowMediaStore = Object.freeze({
-    put, get, putPreview, getPreview, record, requestAccess, remove, cleanupExpired, deleteOldBlobDatabase
+    put, get, putPreview, getPreview, putTaskGroups, getTaskGroup,
+    record, requestAccess, remove, cleanupExpired, deleteOldBlobDatabase
   });
 })();

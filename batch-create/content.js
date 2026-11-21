@@ -44,6 +44,14 @@ function modal(title){
   :host{all:initial}*{box-sizing:border-box} .shade{position:fixed;inset:0;z-index:2147483647;background:rgba(20,27,48,.42);display:flex;align-items:center;justify-content:center;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif;color:#25314d}
   .dialog{width:min(650px,96vw);max-height:94vh;display:flex;flex-direction:column;background:white;border-radius:14px;box-shadow:0 20px 70px #0003;overflow:hidden}header{display:flex;justify-content:space-between;align-items:center;padding:13px 20px;font-size:16px;font-weight:700;border-bottom:1px solid #eaedf3}main{padding:15px 20px;overflow:auto}footer{display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:12px 20px;border-top:1px solid #edf0f5}footer>button{flex:0 0 auto;white-space:nowrap}.footer-error{flex:1 1 auto;min-width:0;max-height:76px;overflow-y:auto;overflow-wrap:anywhere;line-height:1.45;align-self:center}.footer-error:empty{display:none}
   section{padding:12px 0;border-bottom:1px solid #edf0f5}h3{font-size:14px;margin:0 0 10px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 12px}.row{display:flex;align-items:center;gap:8px}.row>*{min-width:0}.field{display:flex;flex-direction:column;gap:5px;margin-bottom:8px}label{font-size:12px;font-weight:600;color:#34405b}input,select,textarea{width:100%;min-height:34px;border:1px solid #d9dfec;background:white;color:#28344e;border-radius:7px;padding:7px 9px;font:inherit;font-size:13px;outline:none}input:focus,select:focus{border-color:#415fff}input[type=checkbox]{width:auto;min-height:0}button{border:1px solid #d9dfec;border-radius:7px;background:white;color:#3d4c6a;cursor:pointer;font-size:13px;padding:7px 12px}button.primary{background:#415fff;color:white;border-color:#415fff;font-weight:600}button:hover{filter:brightness(.97)}.hint{font-size:11px;color:#78859c}.warn{font-size:12px;color:#c93b42;white-space:pre-wrap}.name-row{display:flex;align-items:center;gap:7px;margin:6px 0}.name-row input{flex:1;min-width:0}.name-row select{width:128px;min-width:128px;flex:0 0 128px}.name-row button{flex:0 0 auto}.name-head{display:flex;align-items:center;gap:7px;color:#65718a;font-size:12px;margin:0 0 5px}.name-head .num-col,.name-row .num-col{flex:0 0 15px;text-align:center}.name-head .name-col{flex:1;min-width:0}.name-head .display-col{flex:0 0 128px}.name-head .action-col{flex:0 0 50px}@media(max-width:470px){.name-row{gap:4px}.name-row select{width:94px;min-width:94px;flex-basis:94px}.name-row button{padding:7px 5px}.name-head .display-col{flex-basis:94px}.name-head .action-col{flex-basis:40px}}.zone{border:1.5px dashed #b9c9e9;background:#f8faff;padding:13px;color:#415fff;width:100%;text-align:center}.summary{margin:8px 0 0;font-size:12px;color:#66758e;word-break:break-all}.progress{position:fixed;right:16px;bottom:16px;z-index:2147483600;width:320px;max-width:90vw;padding:12px;background:#fff;box-shadow:0 4px 24px #0003;border-radius:9px;font:12px/1.5 Arial,sans-serif;color:#26344d}.progress strong{font-size:13px}.progress button{float:right}.check{font-weight:400;display:flex;gap:7px;align-items:start}.check input{margin:3px 0 0} .catalog-trigger{margin-top:5px;color:#415fff;border-color:#b4c2ef;align-self:flex-start}.manage-shade{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(20,27,48,.52);font:13px/1.5 -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif}.manage-dialog{width:min(680px,94vw);max-height:90vh;background:white;color:#25314d;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 10px 60px #0004;overflow:hidden}.manage-dialog header,.manage-dialog footer{flex-shrink:0}.manage-dialog main{overflow:auto}.catalog-item{border:1px solid #e1e6ef;border-radius:8px;margin:7px 0;padding:8px;display:flex;gap:6px;justify-content:space-between;align-items:center}.catalog-item .detail{flex:1;min-width:0;overflow-wrap:anywhere}.catalog-item .detail span{color:#6c7991} .manage-hint{margin:5px 0;color:#74809a;font-size:12px} 
+    .media-set{border:1px solid #dfe6f2;border-radius:10px;background:#fbfcff;padding:12px;margin:10px 0}
+    .media-set>.row:first-child{margin-bottom:10px}.media-set>.name-head{margin-top:4px}
+    .small-zone{min-height:34px;padding:7px 9px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .plan-add-wide{background:transparent;min-height:38px}
+    .plan-delete{border:0;background:transparent;color:#c93b42;padding:5px;font-size:15px;min-width:25px}
+    .plan-delete:disabled{opacity:.25;cursor:not-allowed}
+    .media-set .name-row input{flex:1}.media-set .name-row select{flex-basis:128px}
+    @media(max-width:470px){.media-set .name-row select{flex-basis:94px}}
   `;
   const backdrop=node('div',{className:'shade'}), dialog=node('div',{className:'dialog'}),header=node('header'),main=node('main'),footer=node('footer');
   header.append(node('span',{},title));const x=node('button',{'aria-label':'关闭'},'×');x.onclick=()=>closeModal();header.append(x);
@@ -173,181 +181,271 @@ function displayFor(task){
  return Array.isArray(c.displays)?c.displays[task.index]:c.display;
 }
 function mediaTypeOf(f){const nm=f.name||'',tp=f.type||'';return /^image\//.test(tp)||/\.(png|jpe?g|gif|webp)$/i.test(nm)?'image': /^video\//.test(tp)||/\.(mp4|mov|m4v|webm)$/i.test(nm)?'video':'';}
-async function selectFiles(kind,preview=false){
+async function selectFiles(kind,preview=false,multiple=true){
   if(typeof window.showOpenFilePicker!=='function')throw Error('当前浏览器不支持文件句柄选择，请使用新版 Chrome');
-  const types=preview?[{description:'横版预览图',accept:{'image/jpeg':['.jpg','.jpeg'],'image/png':['.png']}}]:[
+  const types=preview?[{description:'预览图（JPG/PNG）',accept:{'image/jpeg':['.jpg','.jpeg'],'image/png':['.png']}}]:[
     {description:kind==='video'?'视频素材':'图片素材',accept:kind==='video'?{'video/mp4':['.mp4'],'video/quicktime':['.mov'],'video/webm':['.webm']}:{'image/jpeg':['.jpg','.jpeg'],'image/png':['.png'],'image/gif':['.gif']}}
   ];
-  const handles=await window.showOpenFilePicker({multiple:true,types,excludeAcceptAllOption:true});
+  const handles=await window.showOpenFilePicker({multiple,types,excludeAcceptAllOption:true});
   if(handles.length>10)throw Error('一次最多选择10个素材');
   const descriptions=[];
   for(const handle of handles){const f=await handle.getFile();if(preview&&!/\.(jpe?g|png)$/i.test(f.name))throw Error('预览图仅支持 JPG/PNG');if(!preview&&mediaTypeOf(f)!==kind)throw Error('所选文件类型不匹配');descriptions.push({name:f.name,type:f.type,size:f.size,lastModified:f.lastModified});}
   return {handles,descriptions};
 }
 async function openForm(){
-  if(!usePlan())return;
-  const {main,footer}=modal('批量新建广告');let media={handles:[],descriptions:[],kind:''},preview={handles:[],descriptions:[]};
-  const names=addSection(main,'广告名称与展现形式（每行创建一套完整广告）');
-  const heading=node('div',{className:'name-head'});
-  for(const [cls,label] of [['num-col',''],['name-col','广告名称'],['display-col','展现形式'],['action-col','']])heading.append(node('span',{className:cls},label));
-  names.append(heading);
-  const nameBox=node('div');names.append(nameBox);
-  const displayTypes=['开屏','Banner','插屏','原生','激励互动','信息流'];
-  let entries=[];
-  const appendName=(v='',displayValue='开屏')=>{
-    if(entries.length>=10)return;
-    const row=node('div',{className:'name-row'}),counter=node('span',{className:'num-col'},String(entries.length+1)+'.');
-    const input=node('input',{type:'text',placeholder:'填写广告名称，三层名称保持一致'});
-    input.maxLength=200;input.value=v;
-    const displaySelect=node('select',{'aria-label':`第${entries.length+1}套广告的展现形式`});
-    for(const display of displayTypes){const item=node('option',{},display);item.value=display;displaySelect.append(item);}
-    displaySelect.value=displayValue;
-    const del=node('button',{},'删除');row.append(counter,input,displaySelect,del);nameBox.append(row);
-    const entry={row,counter,input,displaySelect};entries.push(entry);
-    del.onclick=()=>{
-      if(entries.length===1){input.value='';return;}
-      entries=entries.filter(item=>item!==entry);row.remove();
-      entries.forEach((item,i)=>{item.counter.textContent=String(i+1)+'.';item.displaySelect.setAttribute('aria-label',`第${i+1}套广告的展现形式`);});
-    };
-  };
-  appendName();
-  const addName=node('button',{},'＋ 添加广告名称');
-  addName.onclick=()=>{
-    if(entries.length>=10)return;
-    const previous=entries[entries.length-1];
-    appendName(previous?.input.value||'',previous?.displaySelect.value||'开屏');
-    const added=entries[entries.length-1].input;added.focus();added.setSelectionRange(added.value.length,added.value.length);
-  };
-  names.append(addName);
-  addHelp(names,'每套广告独立选择展现形式；新增行复制上一行的名称与展现形式。下面的创意类型、素材和其他参数仍为全部广告共用；开始前会检查各展现形式是否支持该创意类型。每批最多10套。');
-  const p=addSection(main,'广告计划');const pg=node('div',{className:'grid'});p.append(pg);
-  const planType=addSelect(pg,'计划类型',['商店','非商店','联盟'],'联盟'), scene=addSelect(pg,'场景定制',['普通投放','极速唤新'],'普通投放');
-  const g=addSection(main,'广告组');const gg=node('div',{className:'grid'});g.append(gg);
-  const appWrap=node('div',{className:'field'}),categoryWrap=node('div',{className:'field'});
-  gg.append(appWrap,categoryWrap);
-  appWrap.append(node('label',{},'推广应用 *'));const app=node('select');appWrap.append(app);
-  categoryWrap.append(node('label',{},'行业/产品（二级关联）*'));const category=node('select');categoryWrap.append(category);
-  let catalogPairs=[],categoryOptions=[];
-  function updateCategory(wanted=''){
-    categoryOptions=LoveBatchCatalog.choices(catalogPairs,app.value);
-    category.replaceChildren();const empty=node('option',{},'请选择该应用的「一级行业 → 二级产品」');empty.value='';category.append(empty);
-    for(const pair of categoryOptions){
-      const opt=node('option',{},`${pair.industry} → ${pair.product}${pair.isDefault?'（默认）':''}`);
-      opt.value=LoveBatchCatalog.pairValue(pair);category.append(opt);
-    }
-    category.value=LoveBatchCatalog.preferred(catalogPairs,app.value,wanted);
-  }
-  async function refreshCatalog(wantedApp=app.value,wantedCategory=category.value){
-    catalogPairs=await LoveBatchCatalog.load();
-    populateDropdown(app,LoveBatchCatalog.apps(catalogPairs),'请选择推广应用',wantedApp);
-    updateCategory(wantedCategory);
-  }
-  app.onchange=()=>updateCategory();
-  const manage=node('button',{className:'catalog-trigger'},'管理应用、行业与产品');g.append(manage);
-  manage.onclick=async()=>{try{await openCatalogManager(()=>refreshCatalog());}catch(e){error.textContent='打开应用管理失败：'+e.message;}};
-  addHelp(g,'先选推广应用，再选它绑定的「一级行业 → 二级产品」；仅有一组或已设默认时自动选中。旧记录若显示待完善，请在管理窗口分别填写两个层级。');
-  refreshCatalog().catch(e=>{error.textContent='读取应用列表失败：'+e.message;});
-  const install=addSelect(gg,'安装定向',['不限','未安装','已安装'],'已安装');
-  const bidMethod=addSelect(gg,'出价方式',['按千次展示出价','按点击出价','按转化目标出价'],'按转化目标出价');
-  const goal=addSelect(gg,'优化目标',['自定义拉活','自定义付费','自定义激活','自定义注册','下载','游戏注册','新增激活','游戏ROI-充值付费'],'自定义拉活');
-  const bidAmount=addNumber(gg,'出价金额（按平台对应单位填写）','0.1');
-  const ad=addSection(main,'广告创意');const ag=node('div',{className:'grid'});ad.append(ag);
-  const creativeType=addSelect(ag,'创意类型',['无图','竖版大图','横版大图','小图','组图','竖版视频','横版视频'],'竖版大图');
-  const spec=addSelect(ag,'创意规格',['不指定','1080*1880','1080*1920'],'1080*1920');
-  // 素材类型由创意类型唯一决定：视频选视频，其他有图类型选图片，无图无需素材。
-  // 此处不再让用户重复选择「素材种类」，也不更改原文件句柄上传引擎。
-  const mediaKindForCreative=()=>expectedMediaType({creativeType:creativeType.value});
-  const mediaBtn=node('button',{className:'zone'},'＋ 选择图片素材（最多10个）'),mediaInfo=addHelp(ad,'未选择素材');ad.append(mediaBtn);
-  const removeMedia=node('button',{},'清除所选素材');ad.append(removeMedia);
-  let lastDisplayedMediaKind=null;
-  function refreshMediaUi(){
-    const kind=mediaKindForCreative();
-    const kindChanged=kind!==lastDisplayedMediaKind;
-    const discarded=!!media.handles.length&&media.kind!==kind;
-    if(discarded)media={handles:[],descriptions:[],kind:''};
-    mediaBtn.disabled=!kind;
-    mediaBtn.textContent=kind==='video'?'＋ 选择视频素材（最多10个）':kind==='image'?'＋ 选择图片素材（最多10个）':'无图创意无需选择素材';
-    if(!kind)mediaInfo.textContent='当前为「无图」创意，无需图片或视频';
-    else if(discarded)mediaInfo.textContent='创意类型已变更为'+(kind==='video'?'视频':'图片')+'，原素材已清除，请重新选择';
-    else if(kindChanged&&!media.handles.length)mediaInfo.textContent='未选择素材';
-    lastDisplayedMediaKind=kind;
-  }
-  creativeType.addEventListener('change',refreshMediaUi);
-  refreshMediaUi();
-  mediaBtn.onclick=async()=>{
-    const kind=mediaKindForCreative();if(!kind)return;
-    try{
-      const next=await selectFiles(kind);
-      // 用户在文件选择过程中改变了创意类型时，不得保留错误类型的句柄。
-      if(mediaKindForCreative()!==kind){mediaInfo.textContent='创意类型已经改变，请重新选择对应素材';return;}
-      media={...next,kind};
-      mediaInfo.textContent=`已选${media.handles.length}个：${media.descriptions.map(d=>d.name).join('、')}`;
-    }catch(e){if(e.name!=='AbortError')error.textContent=e.message;}
-  };
-  removeMedia.onclick=()=>{media={handles:[],descriptions:[],kind:''};mediaInfo.textContent=mediaKindForCreative()?'未选择素材':'当前为「无图」创意，无需图片或视频';};
-  const coverBtn=node('button',{className:'zone'},'＋ 选择横版预览图（可选，最多10张）'),coverInfo=addHelp(ad,'仅激励互动＋竖版视频使用；与视频逐张对应。');ad.append(coverBtn);
-  const removeCover=node('button',{},'清除预览图');ad.append(removeCover);
-  coverBtn.onclick=async()=>{try{preview=await selectFiles('image',true);coverInfo.textContent=`已选${preview.handles.length}张：${preview.descriptions.map(d=>d.name).join('、')}`;}catch(e){if(e.name!=='AbortError')error.textContent=e.message;}};
-  removeCover.onclick=()=>{preview={handles:[],descriptions:[]};coverInfo.textContent='未选择横版预览图';};
-  const textGrid=node('div',{className:'grid'});ad.append(textGrid);const appName=addInput(textGrid,'应用名称 / 标题','创意标题'),subtitle=addInput(textGrid,'应用副标题','创意副标题');
-  addHelp(ad,'使用原来的上传引擎，图片/视频只保留文件句柄；不自动复制整份素材到数据库。页面其他字段保留 vivo 默认值。');
-  const errSection=addSection(main,'执行与投放安全');
-  const check=node('label',{className:'check'});const auto=node('input',{type:'checkbox'});check.append(auto,node('span',{},'允许自动点击最终「提交」并依次创建下一套；我了解新建广告可能立即投放并产生费用。'));errSection.append(check);
-  addHelp(errSection,'不勾选：每套执行到最后一步时，必须在创建页面手动点击「确认提交当前广告」才会继续。若页面存在额外必填项或无法确认成功，任务会停止。');
-  // Keep validation and task-start errors next to the Start button so they are visible
-  // even when the scrollable configuration form is long.
-  const error=node('div',{className:'warn footer-error'});error.setAttribute('role','alert');
-  const cancel=node('button',{},'取消'),start=node('button',{className:'primary'},'开始批量创建');footer.append(error,cancel,start);cancel.onclick=closeModal;
-  start.onclick=async()=>{
-    error.textContent='';
-    const values=entries.map(item=>clean(item.input.value));
-    const displays=entries.map(item=>item.displaySelect.value);
-    if(values.some(n=>!n)||new Set(values).size!==values.length){error.textContent='请为每套填写不同的广告名称。';return;}
-    const incompatible=entries.find(item=>!supportedCreativeTypes(item.displaySelect.value).includes(creativeType.value));
-    if(incompatible){
-      const idx=entries.indexOf(incompatible)+1;
-      error.textContent=`第${idx}套「${clean(incompatible.input.value)}」选择的展现形式「${incompatible.displaySelect.value}」不支持公共创意类型「${creativeType.value}」。该展现形式可选：${supportedCreativeTypes(incompatible.displaySelect.value).join('、')}。请修改展现形式或下面的公共创意类型。`;
-      return;
-    }
-    if(!app.value||!category.value){error.textContent='请从联动列表中选择推广应用和完整的一级行业、二级产品；没有选项时请点击「管理应用、行业与产品」添加。';return;}
-    const association=categoryOptions.find(p=>LoveBatchCatalog.pairValue(p)===category.value);
-    if(!association){error.textContent='应用与行业/产品关联无效，请重新选择。';return;}
-    const inferredMediaKind=mediaKindForCreative();
-    if(!media.handles.length&&inferredMediaKind){error.textContent=`当前创意类型「${creativeType.value}」需要${inferredMediaKind==='video'?'视频':'图片'}；请选择至少1个素材。`;return;}
-    if(media.handles.length&&inferredMediaKind!==media.kind){error.textContent='已选素材与当前创意类型不一致，请重新选择。';return;}
-    if(media.handles.length&&(!appName.value.trim()||!subtitle.value.trim())){error.textContent='新建创意需要应用名称和副标题，请填写。';return;}
-    start.disabled=true;start.textContent='准备任务中…';const taskId='love-batch-'+crypto.randomUUID();
-    try{
-      if(media.handles.length)await LoveWorkflowMediaStore.put(taskId,media.handles,media.descriptions,media.kind);
-      if(preview.handles.length)await LoveWorkflowMediaStore.putPreview(taskId,preview.handles,preview.descriptions);
-      const config={names:values,displays,planType:planType.value,scene:scene.value,app:app.value,industry:association.industry,product:association.product,install:install.value,bidMethod:bidMethod.value,goal:goal.value,bidAmount:bidAmount.value,display:displays[0],creativeType:creativeType.value,spec:spec.value,appName:appName.value.trim(),subtitle:subtitle.value.trim(),mediaKind:inferredMediaKind,mediaCount:media.handles.length,previewCount:preview.handles.length,autoSubmit:auto.checked};
-      const started=await api('START',{path:location.pathname,taskId,config});
-      // START, not right-click, is the moment the previous task is retired.
-      // Remove only the retired batch's file HANDLE references, never its
-      // source files and never the newly stored batch's handles.
-      const retiredId=started?.replacedTaskId||started?.task?.replacedTaskId;
-      if(retiredId&&retiredId!==taskId)
-        await LoveWorkflowMediaStore.remove(retiredId).catch(e=>console.warn('[LoveBatch] retired media cleanup:',e));
-      lastRunKey='';hiddenProgressKey='';stoppedTaskId='';cancelCompletedProgressHide();
-      closeModal();renderProgress();
-    }catch(e){
-      // If START already persisted a paused task (e.g. tabs.create failed),
-      // keep its file handles so the user can reopen the first work tab.
-      let persisted=false;
-      try{persisted=(await api('GET')).task?.id===taskId;}catch(_){}
-      if(!persisted)await LoveWorkflowMediaStore.remove(taskId).catch(()=>{});
-      error.textContent=e.message+(persisted?'；本次任务已暂停，可关闭配置窗口后点击「继续任务」':'');
-      start.disabled=false;start.textContent='开始批量创建';
-      if(persisted){
-        try{
-          const current=(await api('GET')).task;
-          if(current?.replacedTaskId&&current.replacedTaskId!==taskId)
-            await LoveWorkflowMediaStore.remove(current.replacedTaskId).catch(()=>{});
-        }catch(_){}
-        renderProgress();
-      }
-    }
-  };
+ if(!usePlan())return;
+ const {main,footer}=modal('批量新建广告');
+ const tasksSection=addSection(main,'任务配置');
+ const taskList=node('div');tasksSection.append(taskList);
+ const taskCards=[];
+ const emptyMedia=()=>({handles:[],descriptions:[],kind:''});
+ const displayTypes=['开屏','Banner','插屏','原生','激励互动','信息流'];
+ const getKind=t=>expectedMediaType({creativeType:t.creativeType.value});
+ const countPlans=()=>taskCards.reduce((n,t)=>n+t.plans.length,0);
+ const statusText=(n,kind)=>'已选 '+n+(kind==='video'?' 个视频':' 张图片');
+ function inferDisplay(name){
+   const matches=displayTypes.filter(d=>clean(name).toLowerCase().includes(d.toLowerCase()));
+   return matches.length===1?matches[0]:'';
+ }
+ function renumber(){
+   taskCards.forEach((task,taskIndex)=>{
+     task.title.textContent='任务 '+(taskIndex+1);
+     task.plans.forEach((plan,i)=>{
+       plan.counter.textContent=(i+1)+'.';
+       plan.display.setAttribute('aria-label','任务'+(taskIndex+1)+'第'+(i+1)+'条广告计划的展现形式');
+       plan.remove.title='删除本条广告计划';
+       plan.remove.disabled=task.plans.length===1;
+     });
+   });
+ }
+ function addPlan(task,name='',format='开屏'){
+   if(countPlans()>=10)return;
+   const row=node('div',{className:'name-row'});
+   const counter=node('span',{className:'num-col'});
+   const input=node('input',{type:'text',placeholder:'填写广告名称'});
+   input.maxLength=200;input.value=name;
+   const display=node('select');
+   for(const value of displayTypes){const option=node('option',{},value);option.value=value;display.append(option);}
+   display.value=format;
+   const remove=node('button',{className:'plan-delete','aria-label':'删除广告计划',title:'删除广告计划'},'🗑');
+   row.append(counter,input,display,remove);task.planBox.append(row);
+   const plan={row,counter,input,display,remove,manualDisplay:false};
+   task.plans.push(plan);
+   input.addEventListener('input',()=>{
+     if(!plan.manualDisplay){const matched=inferDisplay(input.value);if(matched)display.value=matched;}
+     updateMediaUi(task);
+   });
+   display.addEventListener('change',()=>{plan.manualDisplay=true;updateMediaUi(task);});
+   remove.onclick=()=>{
+     if(task.plans.length===1)return;
+     task.plans=task.plans.filter(x=>x!==plan);row.remove();renumber();updateMediaUi(task);
+   };
+   renumber();
+   return input;
+ }
+ function updateMediaUi(task){
+   const kind=getKind(task);
+   if(task.media.handles.length&&task.media.kind!==kind){task.media=emptyMedia();task.previews=[];}
+   task.mediaButton.disabled=!kind;
+   task.mediaButton.textContent=!kind?'无图创意无需素材':task.media.handles.length?
+     statusText(task.media.handles.length,kind):'＋ 选择'+(kind==='video'?'视频':'图片')+'素材';
+   const special=kind==='video'&&task.creativeType.value==='竖版视频'&&
+     task.plans.some(plan=>plan.display.value==='激励互动');
+   if(!special&&task.previews.length)task.previews=[];
+   task.previewButton.disabled=!special||!task.media.handles.length;
+   const coverCount=task.previews.filter(Boolean).length;
+   task.previewButton.textContent=!special?'仅激励互动＋竖版视频可用':
+     !task.media.handles.length?'请先选择视频':
+     coverCount?'已选 '+coverCount+' 张预览图':'＋ 选择预览图（可选）';
+ }
+ function addTask(previous=null){
+   if(taskCards.length>=10||countPlans()>=10)return;
+   const card=node('div',{className:'media-set'});
+   const top=node('div',{className:'row'});
+   const title=node('strong',{},'任务');
+   const removeTask=node('button',{className:'plan-delete',title:'删除整个任务','aria-label':'删除任务'},'🗑');
+   top.append(title);const space=node('span');space.style.flex='1';top.append(space,removeTask);card.append(top);
+   const head=node('div',{className:'name-head'});
+   for(const [cls,label] of [['num-col',''],['name-col','广告名称'],['display-col','展现形式'],['action-col','']])
+     head.append(node('span',{className:cls},label));
+   card.append(head);
+   const planBox=node('div');card.append(planBox);
+   const addPlanButton=node('button',{className:'zone plan-add-wide'},'＋ 添加广告计划');card.append(addPlanButton);
+   const grid=node('div',{className:'grid'});grid.style.marginTop='11px';card.append(grid);
+   const planType=addSelect(grid,'计划类型',['商店','非商店','联盟'],previous?.planType.value||'联盟');
+   const scene=addSelect(grid,'场景定制',['普通投放','极速唤新'],previous?.scene.value||'普通投放');
+   const creativeType=addSelect(grid,'创意类型',['无图','竖版大图','横版大图','小图','组图','竖版视频','横版视频'],previous?.creativeType.value||'竖版大图');
+   const spec=addSelect(grid,'创意规格',['1080*1920','1080*1880'],'1080*1920');
+   const mediaWrap=node('div',{className:'field'}),previewWrap=node('div',{className:'field'});
+   mediaWrap.append(node('label',{},'图片 / 视频素材'));
+   previewWrap.append(node('label',{},'预览图（可选）'));
+   const mediaButton=node('button',{className:'zone small-zone'});
+   const previewButton=node('button',{className:'zone small-zone'});
+   mediaWrap.append(mediaButton);previewWrap.append(previewButton);grid.append(mediaWrap,previewWrap);
+   const task={card,title,planBox,plans:[],planType,scene,creativeType,spec,mediaButton,previewButton,media:emptyMedia(),previews:[]};
+   taskCards.push(task);taskList.append(card);
+   const priorPlan=previous?.plans[previous.plans.length-1];
+   addPlan(task,priorPlan?.input.value||'',priorPlan?.display.value||'开屏');
+   addPlanButton.onclick=()=>{
+     if(countPlans()>=10)return;
+     const last=task.plans[task.plans.length-1];
+     const input=addPlan(task,last?.input.value||'',last?.display.value||'开屏');
+     updateMediaUi(task);
+     input?.focus();
+   };
+   removeTask.onclick=()=>{
+     if(taskCards.length===1)return;
+     taskCards.splice(taskCards.indexOf(task),1);card.remove();renumber();
+   };
+   creativeType.onchange=()=>updateMediaUi(task);
+   mediaButton.onclick=async()=>{
+     const kind=getKind(task);if(!kind)return;
+     try{
+       const selected=await selectFiles(kind);
+       if(!taskCards.includes(task)||getKind(task)!==kind)return;
+       task.media={...selected,kind};
+       task.previews=[];updateMediaUi(task);
+     }catch(e){if(e.name!=='AbortError')error.textContent=e.message;}
+   };
+   previewButton.onclick=async()=>{
+     const special=task.creativeType.value==='竖版视频'&&
+       task.plans.some(plan=>plan.display.value==='激励互动');
+     if(!special||!task.media.handles.length)return;
+     try{
+       const selected=await selectFiles('image',true);
+       if(!taskCards.includes(task)||task.creativeType.value!=='竖版视频'||
+         !task.plans.some(plan=>plan.display.value==='激励互动'))return;
+       if(selected.handles.length>task.media.handles.length)
+         throw Error('预览图数量不能超过已选视频数量');
+       task.previews=task.media.handles.map((_,i)=>selected.handles[i]?
+         {handle:selected.handles[i],description:selected.descriptions[i]}:null);
+       updateMediaUi(task);
+     }catch(e){if(e.name!=='AbortError')error.textContent=e.message;}
+   };
+   updateMediaUi(task);renumber();
+   return task;
+ }
+ addTask();
+ const addTaskButton=node('button',{className:'zone'},'＋ 新增任务');
+ addTaskButton.onclick=()=>addTask(taskCards[taskCards.length-1]);
+ tasksSection.append(addTaskButton);
+ addHelp(tasksSection,'每个任务可包含多条广告计划；任务内的计划共用创意类型、素材和预览图。整批最多10套广告计划。');
+ const g=addSection(main,'公共参数设计');const grid=node('div',{className:'grid'});g.append(grid);
+ const appWrap=node('div',{className:'field'}),categoryWrap=node('div',{className:'field'});grid.append(appWrap,categoryWrap);
+ appWrap.append(node('label',{},'推广应用 *'));const app=node('select');appWrap.append(app);
+ categoryWrap.append(node('label',{},'行业/产品（二级关联）*'));const category=node('select');categoryWrap.append(category);
+ let catalogPairs=[],categoryOptions=[];
+ function updateCategory(wanted=''){
+   categoryOptions=LoveBatchCatalog.choices(catalogPairs,app.value);
+   category.replaceChildren();const empty=node('option',{},'请选择该应用的「一级行业 → 二级产品」');empty.value='';category.append(empty);
+   for(const pair of categoryOptions){
+     const option=node('option',{},pair.industry+' → '+pair.product+(pair.isDefault?'（默认）':''));option.value=LoveBatchCatalog.pairValue(pair);category.append(option);
+   }
+   category.value=LoveBatchCatalog.preferred(catalogPairs,app.value,wanted);
+ }
+ async function refreshCatalog(wantedApp=app.value,wantedCategory=category.value){
+   catalogPairs=await LoveBatchCatalog.load();
+   populateDropdown(app,LoveBatchCatalog.apps(catalogPairs),'请选择推广应用',wantedApp);
+   updateCategory(wantedCategory);
+ }
+ app.onchange=()=>updateCategory();
+ const manage=node('button',{className:'catalog-trigger'},'管理应用、行业与产品');g.append(manage);
+ manage.onclick=async()=>{try{await openCatalogManager(()=>refreshCatalog());}catch(e){error.textContent=e.message;}};
+ refreshCatalog().catch(e=>{error.textContent='读取应用列表失败：'+e.message;});
+ const install=addSelect(grid,'安装定向',['不限','未安装','已安装'],'已安装');
+ const bidMethod=addSelect(grid,'出价方式',['按千次展示出价','按点击出价','按转化目标出价'],'按转化目标出价');
+ const goal=addSelect(grid,'优化目标',['自定义拉活','自定义付费','自定义激活','自定义注册','下载','游戏注册','新增激活','游戏ROI-充值付费'],'自定义拉活');
+ const bidAmount=addNumber(grid,'出价金额（按平台对应单位填写）','0.1');
+ const appName=addInput(grid,'应用名称 / 标题','创意标题');
+ const subtitle=addInput(grid,'应用副标题','创意副标题');
+ const exposeLink=addInput(grid,'曝光监测地址','粘贴完整曝光监测链接');
+ const clickLink=addInput(grid,'点击监测地址','粘贴完整点击监测链接');
+ const deepLink=addInput(grid,'DeepLink','粘贴完整 DeepLink');
+ // URLs may be long: give every link the full line of the shared section.
+ for(const input of [exposeLink,clickLink,deepLink])input.parentElement.style.gridColumn='1 / -1';
+ addHelp(g,'监测链接三项一起填写；只在点击「开始批量创建」时执行原一键检测的基础四项校验，不读取或比对本地历史链接。未填写三项时保持平台原有值。');
+ addHelp(g,'全部任务共用以上参数；创建时默认自动提交，遇到错误自动暂停，人工修复后点击「继续任务」。');
+ const error=node('div',{className:'warn footer-error'});error.setAttribute('role','alert');
+ const cancel=node('button',{},'取消'),start=node('button',{className:'primary'},'开始批量创建');
+ footer.append(error,cancel,start);cancel.onclick=closeModal;
+ start.onclick=async()=>{
+   error.textContent='';
+   const planTasks=taskCards.map(task=>{
+     const mediaKind=getKind(task);
+     const covers=task.media.handles.map((_,i)=>task.previews[i]||null);
+     return {
+       plans:task.plans.map(p=>({name:clean(p.input.value),display:p.display.value})),
+       planType:task.planType.value,scene:task.scene.value,creativeType:task.creativeType.value,
+       spec:task.spec.value,mediaKind,mediaCount:task.media.handles.length,
+       previewCount:covers.filter(Boolean).length,
+       previewIndices:covers.flatMap((cover,i)=>cover?[i]:[])
+     };
+   });
+   const plans=planTasks.flatMap(t=>t.plans);
+   if(!plans.length||plans.length>10){error.textContent='整批必须有1～10条广告计划';return;}
+   if(plans.some(p=>!p.name)||new Set(plans.map(p=>p.name)).size!==plans.length){
+     error.textContent='广告名称不能为空或重复；新增时复制的名称请修改后再开始';return;
+   }
+   for(let i=0;i<taskCards.length;i++){
+     const task=taskCards[i],c=planTasks[i];
+     const bad=c.plans.find(p=>!supportedCreativeTypes(p.display).includes(c.creativeType));
+     if(bad){error.textContent='任务'+(i+1)+'「'+bad.name+'」的展现形式不支持创意类型「'+c.creativeType+'」';return;}
+     if(c.mediaKind&&!c.mediaCount){error.textContent='任务'+(i+1)+'缺少'+(c.mediaKind==='video'?'视频':'图片')+'素材';return;}
+     if(task.media.handles.length&&task.media.kind!==c.mediaKind){error.textContent='任务'+(i+1)+'素材类型已变化，请重新选择';return;}
+     if(c.previewCount&&!(c.creativeType==='竖版视频'&&c.plans.some(p=>p.display==='激励互动'))){
+       error.textContent='任务'+(i+1)+'的预览图仅适用于「激励互动＋竖版视频」';return;
+     }
+   }
+   if(!app.value||!category.value){error.textContent='请选择推广应用以及完整的行业/产品关联';return;}
+   const association=categoryOptions.find(p=>LoveBatchCatalog.pairValue(p)===category.value);
+   if(!association){error.textContent='应用与行业/产品关联无效';return;}
+   if(planTasks.some(t=>t.mediaCount)&&(!appName.value.trim()||!subtitle.value.trim())){
+     error.textContent='使用素材创建创意时，需要填写应用名称和副标题';return;
+   }
+   const monitorLinks={expose:exposeLink.value,click:clickLink.value,deeplink:deepLink.value};
+   const linksConfigured=Object.values(monitorLinks).some(value=>value.trim());
+   if(linksConfigured){
+     const checker=globalThis.LoveBatchLinkBasicCheck;
+     if(typeof checker?.validate!=='function'){
+       error.textContent='链接基础检测组件未加载，请重新加载扩展并刷新页面';return;
+     }
+     // Deliberately run ONCE at Start. No baseline lookup, storage or diff.
+     const linkErrors=checker.validate(monitorLinks);
+     if(linkErrors.length){
+       error.textContent='监测链接基础检测未通过：\n'+linkErrors.join('\n');return;
+     }
+   }
+   const taskId='love-batch-'+crypto.randomUUID();
+   start.disabled=true;start.textContent='准备任务中…';
+   try{
+     const groups=taskCards.map(task=>({
+       handles:task.media.handles,descriptions:task.media.descriptions,expectedKind:getKind(task),
+       previewHandles:task.media.handles.map((_,i)=>task.previews[i]?.handle||null),
+       previewDescriptions:task.media.handles.map((_,i)=>task.previews[i]?.description||null)
+     }));
+     await LoveWorkflowMediaStore.putTaskGroups(taskId,groups);
+     const config={
+       planTasks,names:plans.map(p=>p.name),displays:plans.map(p=>p.display),
+       app:app.value,industry:association.industry,product:association.product,
+       install:install.value,bidMethod:bidMethod.value,goal:goal.value,
+       bidAmount:bidAmount.value,appName:appName.value.trim(),subtitle:subtitle.value.trim(),
+       monitorLinks:linksConfigured?monitorLinks:null,autoSubmit:true
+     };
+     const started=await api('START',{path:location.pathname,taskId,config});
+     const retiredId=started?.replacedTaskId||started?.task?.replacedTaskId;
+     if(retiredId&&retiredId!==taskId)
+       await LoveWorkflowMediaStore.remove(retiredId).catch(e=>console.warn('[LoveBatch] 旧任务素材清理失败：',e));
+     lastRunKey='';hiddenProgressKey='';stoppedTaskId='';cancelCompletedProgressHide();
+     closeModal();renderProgress();
+   }catch(e){
+     let persisted=false;
+     try{persisted=(await api('GET')).task?.id===taskId;}catch(_){}
+     if(!persisted)await LoveWorkflowMediaStore.remove(taskId).catch(()=>{});
+     error.textContent=e.message+(persisted?'；任务已暂停，可关闭配置窗口后点击继续任务':'');
+     start.disabled=false;start.textContent='开始批量创建';
+     if(persisted)renderProgress();
+   }
+ };
 }
 function activeLabelMatches(el,txt){const t=clean(el.textContent);return t===txt||t.replace(/\s+/g,'')===txt.replace(/\s+/g,'');}
 function field(label){
@@ -786,8 +884,9 @@ async function clickSaveAndWait(next,task){
  catch(e){if(!/状态不匹配/.test(e.message))throw e;}
 }
 async function planStage(task){const c=task.config,name=c.names[task.index];await waitFor(()=>stageReady('PLAN'),'新建计划页面',25000);
- await clickChoice('计划类型',c.planType);
- if(c.scene!=='普通投放'||field('场景定制')) await clickChoice('场景定制',c.scene);
+ const p=creativeConfigFor(task);
+ await clickChoice('计划类型',p.planType);
+ if(p.scene!=='普通投放'||field('场景定制')) await clickChoice('场景定制',p.scene);
  requireInput('计划名称',name);
  await clickSaveAndWait('GROUP',task);
 }
@@ -827,38 +926,55 @@ async function groupStage(task){const c=task.config,name=c.names[task.index];awa
  await clickSaveAndWait('AD',task);
 }
 function expectedMediaType(c){return c.creativeType.includes('视频')?'video':c.creativeType==='无图'?'': 'image';}
-async function creativeFiles(task){const c=task.config;
- if(!c.mediaCount)return [];
+function creativeConfigFor(task){
+ const c=task.config;
+ return c.planTasks ? c.planTasks[c.planMap[task.index].taskIndex] : c;
+}
+async function creativeFiles(task){const c=creativeConfigFor(task);
  if(!globalThis.LoveWorkflowMediaStore)throw Error('文件句柄模块未加载');
+ if(task.config.planTasks){
+   const group=await LoveWorkflowMediaStore.getTaskGroup(task.id,task.config.planMap[task.index].taskIndex);
+   if(group.files.length!==c.mediaCount||group.expectedKind!==c.mediaKind||
+      group.files.some(f=>mediaTypeOf(f)!==c.mediaKind)||
+      group.previews.filter(Boolean).length!==c.previewCount)
+     throw Error('当前任务的素材/预览图数量或类型与保存的配置不一致');
+   return group;
+ }
+ if(!c.mediaCount)return {files:[],previews:[]};
  const files=await LoveWorkflowMediaStore.get(task.id);
  if(files.length!==c.mediaCount||files.some(f=>mediaTypeOf(f)!==c.mediaKind))throw Error('媒体文件恢复数量或类型不一致');
- return files;
+ const previews=c.previewCount&&displayFor(task)==='激励互动'&&c.creativeType==='竖版视频'
+   ?await LoveWorkflowMediaStore.getPreview(task.id):[];
+ return {files,previews};
 }
-async function setupAdCreative(task){const c=task.config,name=c.names[task.index],display=displayFor(task);await waitFor(()=>stageReady('AD'),'新建创意页面',30000);
- if(!supportedCreativeTypes(display).includes(c.creativeType))throw Error(`第${task.index+1}套展现形式「${display}」不支持创意类型「${c.creativeType}」，已停止`);
+async function setupAdCreative(task){const c=task.config,p=creativeConfigFor(task),name=c.names[task.index],display=displayFor(task);await waitFor(()=>stageReady('AD'),'新建创意页面',30000);
+ if(!supportedCreativeTypes(display).includes(p.creativeType))throw Error(`第${task.index+1}套展现形式「${display}」不支持创意类型「${p.creativeType}」，已停止`);
  await clickDisplayChoice(display);
  // May be hidden on incentive format.
  if(field('创意生成方式'))await clickChoice('创意生成方式','自定义创意');
- await clickChoice('创意类型',c.creativeType);
- if(c.creativeType!=='无图'&&expectedMediaType(c)!==c.mediaKind)throw Error('选择的素材类型与创意类型不一致');
- const files=await creativeFiles(task), count=Math.max(1,files.length);
+ await clickChoice('创意类型',p.creativeType);
+ if(p.creativeType!=='无图'&&expectedMediaType(p)!==p.mediaKind)throw Error('选择的素材类型与创意类型不一致');
+ const {files,previews}=await creativeFiles(task), count=Math.max(1,files.length);
  if(typeof ensureCombinedCreativeCount!=='function')throw Error('原一键上传引擎未加载，请刷新页面');
  beginLoveCombinedTask();
  try{
    await ensureCombinedCreativeCount(count);
    await assertActive(task); // A user may have paused while the first creative was being prepared.
-   if(c.spec!=='不指定'&&field('创意规格'))await clickChoice('创意规格',c.spec); // Only apply the shared spec when the selected format exposes it.
+   if(p.spec!=='不指定'&&field('创意规格'))await clickChoice('创意规格',p.spec); // Some formats have no spec field.
    await assertActive(task);
-   const options={files,mediaKind:c.mediaKind,displayType:display,creativeType:c.creativeType,appName:c.appName,appSubtitle:c.subtitle,hasMedia:!!files.length,hasText:!!(c.appName||c.subtitle),targetCount:count};
+   const specialPreview=display==='激励互动'&&p.creativeType==='竖版视频';
+   const options={files,previewFiles:specialPreview?previews:[],mediaKind:p.mediaKind,displayType:display,creativeType:p.creativeType,appName:c.appName,appSubtitle:c.subtitle,hasMedia:!!files.length,hasText:!!(c.appName||c.subtitle),targetCount:count};
    if(files.length){
-     if(c.mediaKind==='image')await runCombinedImageFlow(options);
+     if(p.mediaKind==='image')await runCombinedImageFlow(options);
      else await runCombinedVideoFlow(options);
    }
    await assertActive(task); // Do not start preview/text work after a paused or stopped upload.
-   if(c.previewCount&&display==='激励互动'&&c.creativeType==='竖版视频'){
-     const previews=await LoveWorkflowMediaStore.getPreview(task.id);
-     if(previews.length!==c.previewCount||previews.length!==files.length)throw Error('激励竖版视频的预览图数量与视频数量不符');
-     await LoveHorizontalPreview.replace({files:previews,indexes:previews.map((_,i)=>i+1),activate:i=>LoveHorizontalPreview.activateManual(i)});
+   if(p.previewCount&&specialPreview){
+     if(!c.planTasks&&previews.length!==files.length)
+       throw Error('激励竖版视频的预览图数量与视频数量不符');
+     const chosen=previews.map((file,i)=>file?{file,index:i+1}:null).filter(Boolean);
+     if(chosen.length!==p.previewCount)throw Error('激励竖版视频的预览图对应关系无效');
+     await LoveHorizontalPreview.replace({files:chosen.map(x=>x.file),indexes:chosen.map(x=>x.index),activate:i=>LoveHorizontalPreview.activateManual(i)});
    }
    await assertActive(task);
    if(c.appName||c.subtitle)await combinedFillUnifiedTextForTargetCreatives(c.appName,c.subtitle,count);
@@ -866,7 +982,25 @@ async function setupAdCreative(task){const c=task.config,name=c.names[task.index
  }finally{finishLoveCombinedTask();}
  requireInput('广告名称',name);
  // A fresh create page should show one or more populated creative tabs before saving.
- if(c.creativeType!=='无图' && typeof getCombinedCreativeIndices==='function' && getCombinedCreativeIndices().length<count)throw Error('未确认全部创意已创建，禁止提交');
+ if(p.creativeType!=='无图' && typeof getCombinedCreativeIndices==='function' && getCombinedCreativeIndices().length<count)throw Error('未确认全部创意已创建，禁止提交');
+}
+async function fillPublicAdLinks(task){
+ const links=task.config.monitorLinks;
+ if(!links)return; // Existing batches and batches without links retain platform defaults.
+ for(const [key,label] of [['expose','曝光监测地址'],['click','点击监测地址'],['deeplink','DeepLink']]){
+   const expected=links[key];
+   if(typeof expected!=='string'||!expected)throw Error(`「${label}」未配置完整，已停止提交`);
+   await assertActive(task);
+   // Platform markup is a labeled .ep-form-item containing textarea.ep-textarea__inner.
+   // Resolve by the exact label every time, never by the ephemeral ep-id index.
+   const control=await waitFor(()=>findInput(label),`找到「${label}」输入框`,12000);
+   if(control.disabled||control.readOnly)throw Error(`「${label}」输入框不可编辑，请先人工处理`);
+   if(control.value!==expected)switchValue(control,expected);
+   await sleep(280); // Allow the vivo/Vue component to reconcile its controlled value.
+   const verified=findInput(label);
+   if(!verified||verified.value!==expected)
+     throw Error(`「${label}」填充后未保持正确值，已暂停防止提交`);
+ }
 }
 async function askSubmit(task){if(task.config.autoSubmit)return true;
  return new Promise(resolve=>{
@@ -878,19 +1012,19 @@ async function askSubmit(task){if(task.config.autoSubmit)return true;
  });
 }
 function manualAdReady(task){
- const c=task.config,name=c.names[task.index],display=displayFor(task);
+ const c=task.config,p=creativeConfigFor(task),name=c.names[task.index],display=displayFor(task);
  if(!stageReady('AD'))throw Error('当前不是广告设置页面，请回到广告设置阶段再继续');
  if(visibleSystemDialogs().length)throw Error('页面仍有系统弹窗，请先手动处理后点击继续');
  if(!displayChoiceSelected(display))throw Error(`手动修复后尚未确认展现形式「${display}」，请先选中再继续`);
- const cf=field('创意类型'),opt=cf&&findOption(cf,c.creativeType);
+ const cf=field('创意类型'),opt=cf&&findOption(cf,p.creativeType);
  if(!opt||!selected(opt.closest('.mkt-radio-card,.ep-radio-button,.el-radio-button,.ep-radio,.el-radio')||opt))
-   throw Error(`手动修复后尚未确认创意类型「${c.creativeType}」，请先选中再继续`);
+   throw Error(`手动修复后尚未确认创意类型「${p.creativeType}」，请先选中再继续`);
  const n=findInput('广告名称');if(!n)throw Error('未找到广告名称输入框');
  if(clean(n.value)!==name)requireInput('广告名称',name);
- const expected=Math.max(1,c.mediaCount||0);
+ const expected=Math.max(1,p.mediaCount||0);
  const counter=existingCreativeCount();
  const actual=typeof getCombinedCreativeIndices==='function'?getCombinedCreativeIndices().length:0;
- if(c.creativeType!=='无图'&&Math.max(actual,counter?.current||0)<expected)
+ if(p.creativeType!=='无图'&&Math.max(actual,counter?.current||0)<expected)
    throw Error(`当前仅确认${Math.max(actual,counter?.current||0)}个创意，需要${expected}个。请先完成素材上传并检查成功，再点击继续`);
  // A rendered creative count does not prove media bytes were uploaded. The
  // user deliberately clicked Continue after manually inspecting the upload.
@@ -910,6 +1044,7 @@ async function clickAdSubmitAndWait(task){
 async function adStage(task){
  if(task.manualResumeStage==='AD')manualAdReady(task); // Never re-run uploads on a manually repaired AD page.
  else await setupAdCreative(task);
+ await fillPublicAdLinks(task);
  await assertActive(task);
  const ok=await askSubmit(task);
  if(!ok){await api('PAUSE');return;} // Only Stop/× permanently terminates the batch.
@@ -987,13 +1122,15 @@ function batchProgressLabel(task){
  const completed=task.results.length;
  if(task.status==='completed')return `全部完成 · 共 ${total} 套已成功创建`;
  const index=Math.min(Math.max(Number(task.index)||0,0),Math.max(total-1,0))+1;
+ const mapping=task.config.planTasks?.length?task.config.planMap?.[index-1]:null;
+ const groupLabel=mapping?`任务 ${mapping.taskIndex+1}/${task.config.planTasks.length} · 任务内计划 ${mapping.planIndex+1}/${task.config.planTasks[mapping.taskIndex].plans.length} · `:'';
  const stageNames={PLAN:'广告计划',GROUP:'广告组',AD:'广告',VERIFY:'结果核验'};
  const phaseNames={pending:'准备中',busy:'执行中',transition:'保存并切换中',opening:'打开下一套中'};
  const stage=stageNames[task.stage]||'任务准备';
  const phase=phaseNames[task.phase]||'';
  const step=phase?`${stage}·${phase}`:stage;
- if(task.status==='running')return `正在创建第 ${index}/${total} 套 · 已完成 ${completed} 套 · ${step}`;
- if(['paused','failed'].includes(task.status))return `等待人工处理 · 第 ${index}/${total} 套 · 已完成 ${completed} 套 · ${stage}`;
+ if(task.status==='running')return `正在创建第 ${index}/${total} 套 · ${groupLabel}已完成 ${completed} 套 · ${step}`;
+ if(['paused','failed'].includes(task.status))return `等待人工处理 · 第 ${index}/${total} 套 · ${groupLabel}已完成 ${completed} 套 · ${stage}`;
  return `已手动停止 · 第 ${index}/${total} 套 · 已完成 ${completed} 套`;
 }
 function progressRoot(){let el=document.getElementById('love-batch-progress');if(!el){el=node('div');el.id='love-batch-progress';document.documentElement.append(el);}return el;}

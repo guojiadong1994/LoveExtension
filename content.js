@@ -214,104 +214,110 @@ function raceLoveCombinedCancel(promise) {
     });
 }
 
-// === 1. 初始化 UI (🍀 幸运草通知版) ===
-function initFloatBall() {
+// === 1. 广告新建/编辑页右键快捷入口（替代左下角悬浮球）===
+const LoveQuickMenu = {installed: false};
+
+function isLoveAdUploadPage() {
+    // Keep the promotion/plan right-click batch-creation entry untouched.
+    return /^\/marketing\/ads\/(?:add|edit)(?:\/|$)/.test(location.pathname);
+}
+
+function hideLoveQuickMenu() {
+    document.getElementById('love-quick-menu')?.remove();
+}
+
+function canOpenLoveQuickMenuAt(target) {
+    if (!(target instanceof Element)) return false;
+    if (target.closest(
+        '#love-quick-menu, #love-batch-host, #love-combined-modal, #love-link-check-modal, ' +
+        '#love-text-fill-modal, .ep-dialog, .el-dialog, [role="dialog"], ' +
+        '.ep-popper, .el-popper, a, button, input, textarea, select, option, label, ' +
+        '[role="button"], [role="menu"], [contenteditable="true"], img, video, canvas, iframe'
+    )) return false;
+    // Preserve the native Copy menu if the user has selected text.
+    if (window.getSelection?.()?.toString().trim()) return false;
+    return true;
+}
+
+function showLoveQuickMenu(x, y) {
+    hideLoveQuickMenu();
+    const menu = document.createElement('div');
+    menu.id = 'love-quick-menu';
+    menu.style.cssText = 'position:fixed!important;top:0;left:0;width:196px;z-index:2147483646!important';
+    const shadow = menu.attachShadow({mode:'open'});
+    shadow.innerHTML = `
+        <style>
+          :host{display:block;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Microsoft YaHei",Arial,sans-serif;color:#26344d}
+          .list{padding:5px;background:#fff;border:1px solid #dbe2ef;border-radius:9px;box-shadow:0 8px 28px rgba(28,45,75,.22)}
+          button{box-sizing:border-box;display:block;width:100%;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;padding:10px 12px;font:inherit;cursor:pointer}
+          button:hover,button:focus-visible{background:#eef2ff;color:#415fff;outline:none}
+        </style>
+        <div class="list" role="menu" aria-label="LoveExtension 快捷功能">
+          <button type="button" id="love-menu-combo" role="menuitem">一键素材+文案</button>
+          <button type="button" id="love-menu-check" role="menuitem">一键检测</button>
+        </div>`;
+    shadow.getElementById('love-menu-combo').addEventListener('click', () => {
+        hideLoveQuickMenu();
+        openCombinedCreativeDialog();
+    });
+    shadow.getElementById('love-menu-check').addEventListener('click', () => {
+        hideLoveQuickMenu();
+        runLoveLinkCheck();
+    });
+    menu.addEventListener('contextmenu', event => event.preventDefault());
+    document.body.appendChild(menu);
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(x, Math.max(8, window.innerWidth - rect.width - 8))) + 'px';
+    menu.style.top = Math.max(8, Math.min(y, Math.max(8, window.innerHeight - rect.height - 8))) + 'px';
+}
+
+function handleLoveQuickMenuContext(event) {
+    hideLoveQuickMenu();
+    if (!isLoveAdUploadPage() || !canOpenLoveQuickMenuAt(event.target)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    showLoveQuickMenu(event.clientX, event.clientY);
+}
+
+function initLoveQuickMenu() {
     installLoveRuntimeGuards();
     installLoveCombinedEscStop();
-    if (document.getElementById('love-float-ball')) return;
-
-    const ball = document.createElement('div');
-    ball.id = 'love-float-ball';
-    ball.removeAttribute('style');
-
-    // 注入样式
-    const style = document.createElement('style');
-    style.innerHTML = `
-        #love-toast-container {
-            position: fixed; top: 20px; right: 20px; z-index: 2147483647;
-            display: flex; flex-direction: column; gap: 10px; pointer-events: none;
-        }
-        .love-toast-slide {
-            background: rgba(255, 255, 255, 0.98); color: #333; padding: 12px 20px;
-            border-radius: 8px; font-size: 14px; font-family: sans-serif;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-left: 4px solid #4CAF50;
-            min-width: 200px; transform: translateX(120%); transition: transform 0.3s ease, opacity 0.3s;
-            opacity: 0; display: flex; align-items: center; gap: 8px;
-        }
-        .love-toast-slide.show { transform: translateX(0); opacity: 1; }
-        .love-toast-icon { font-size: 18px; }
-    `;
-    document.head.appendChild(style);
-
-    const toastContainer = document.createElement('div');
-    toastContainer.id = 'love-toast-container';
-    document.body.appendChild(toastContainer);
-
-    ball.innerHTML = `
-        <style>
-            #love-float-ball {
-                position: fixed !important; bottom: 10px !important; left: 24px !important;
-                width: 40px !important; height: 40px !important;
-                background: rgba(255, 255, 255, 0.68) !important;
-                backdrop-filter: blur(10px) !important;
-                -webkit-backdrop-filter: blur(10px) !important;
-                border: 1px solid rgba(255,255,255,0.42) !important;
-                box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08) !important;
-                border-radius: 50px !important; z-index: 2147483647 !important;
-                display: flex !important; align-items: center !important; justify-content: center !important;
-                overflow: hidden !important; user-select: none !important;
-                transition: width 0.25s ease, height 0.25s ease, border-radius 0.25s ease, background 0.2s ease !important;
+    // Also remove a stale ball if the extension was reloaded without a full page refresh.
+    document.getElementById('love-float-ball')?.remove();
+    if (!document.getElementById('love-toast-container')) {
+        const style = document.createElement('style');
+        style.textContent = `
+            #love-toast-container {
+                position:fixed;top:20px;right:20px;z-index:2147483647;
+                display:flex;flex-direction:column;gap:10px;pointer-events:none
             }
-            #love-float-ball:hover {
-                width: 114px !important;
-                height: 60px !important;
-                border-radius: 18px !important;
-                background: rgba(255, 255, 255, 0.92) !important;
+            .love-toast-slide {
+                background:rgba(255,255,255,.98);color:#333;padding:12px 20px;
+                border-radius:8px;font:14px sans-serif;
+                box-shadow:0 4px 12px rgba(0,0,0,.15);border-left:4px solid #4CAF50;
+                min-width:200px;transform:translateX(120%);
+                transition:transform .3s ease,opacity .3s ease;opacity:0;
+                display:flex;align-items:center;gap:8px
             }
-            .center-icon { font-size: 22px !important; position: absolute !important; pointer-events: none !important; transition: opacity 0.18s !important; }
-            #love-float-ball:hover .center-icon { opacity: 0 !important; }
-            .btn-group {
-                display: grid !important;
-                grid-template-columns: repeat(2, 38px) !important;
-                grid-template-rows: 38px !important;
-                gap: 8px 10px !important;
-                opacity: 0 !important;
-                transform: translateY(8px) !important;
-                transition: opacity 0.2s 0.06s ease, transform 0.2s 0.06s ease !important;
-                pointer-events: none !important;
-                align-items: center !important;
-                justify-content: center !important;
-            }
-            #love-float-ball:hover .btn-group { opacity: 1 !important; transform: translateY(0) !important; pointer-events: auto !important; }
-            .action-btn {
-                font-size: 19px !important; cursor: pointer !important; width: 38px !important; height: 38px !important;
-                display: flex !important; align-items: center !important; justify-content: center !important;
-                border-radius: 12px !important; background: rgba(65, 95, 255, 0.08) !important;
-                border: 1px solid rgba(65, 95, 255, 0.12) !important;
-                transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease !important;
-            }
-            .action-btn:hover { background: rgba(65, 95, 255, 0.16) !important; transform: translateY(-1px) scale(1.05) !important; box-shadow: 0 6px 14px rgba(65,95,255,0.16) !important; }
-            #btn-combo { grid-column: 1 !important; grid-row: 1 !important; }
-            #btn-link-check { grid-column: 2 !important; grid-row: 1 !important; }
-        </style>
-        <div class="center-icon">🍀</div>
-        <div class="btn-group">
-            <div class="action-btn" id="btn-combo" title="一键素材+文案">🧩</div>
-            <div class="action-btn" id="btn-link-check" title="检查地址">🔎</div>
-        </div>
-    `;
-    document.body.appendChild(ball);
-
-    const btnCombo = document.getElementById('btn-combo');
-    const btnLinkCheck = document.getElementById('btn-link-check');
-
-    btnCombo.onclick = () => {
-        openCombinedCreativeDialog();
-    };
-
-    btnLinkCheck.onclick = () => {
-        runLoveLinkCheck();
-    };
+            .love-toast-slide.show{transform:translateX(0);opacity:1}
+            .love-toast-icon{font-size:18px}
+        `;
+        document.head.appendChild(style);
+        const container = document.createElement('div');
+        container.id = 'love-toast-container';
+        document.body.appendChild(container);
+    }
+    if (LoveQuickMenu.installed) return;
+    LoveQuickMenu.installed = true;
+    document.addEventListener('contextmenu', handleLoveQuickMenuContext, true);
+    document.addEventListener('pointerdown', event => {
+        if (!event.target.closest?.('#love-quick-menu')) hideLoveQuickMenu();
+    }, true);
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') hideLoveQuickMenu();
+    }, true);
+    window.addEventListener('scroll', hideLoveQuickMenu, true);
+    window.addEventListener('resize', hideLoveQuickMenu);
 }
 
 
@@ -635,7 +641,7 @@ function findLoveLabelElements(labelText) {
 
     for (const el of nodes) {
         if (!isElementVisible(el)) continue;
-        if (el.closest('#love-float-ball, #love-link-check-modal, #love-text-fill-modal')) continue;
+        if (el.closest('#love-quick-menu, #love-link-check-modal, #love-text-fill-modal')) continue;
 
         const text = normalizeLoveText(el.innerText || el.textContent || '');
         if (!text) continue;
@@ -741,7 +747,7 @@ function getVisibleLoveFormControls() {
     return Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'))
         .filter(el => {
             if (!isElementVisible(el)) return false;
-            if (el.closest('#love-float-ball, #love-link-check-modal, #love-text-fill-modal')) return false;
+            if (el.closest('#love-quick-menu, #love-link-check-modal, #love-text-fill-modal')) return false;
             if (el.tagName === 'INPUT') {
                 const type = (el.getAttribute('type') || 'text').toLowerCase();
                 if (['hidden', 'file', 'checkbox', 'radio', 'button', 'submit', 'reset'].includes(type)) return false;
@@ -830,6 +836,20 @@ function validateLoveVivoDpLinks(values) {
     }
     return dedupeLoveErrors(errors);
 }
+
+// Batch-create uses precisely the same four basic checks as "检查地址",
+// but NEVER reads, writes, or compares the saved historical link baseline.
+// The caller runs this only after the user clicks "开始批量创建".
+globalThis.LoveBatchLinkBasicCheck = Object.freeze({
+    validate(links) {
+        const labels = LOVE_LINK_CHECK_CONFIG.fields;
+        return validateLoveVivoDpLinks({
+            expose: {label:labels.expose, value:String(links?.expose ?? ''), found:true},
+            click: {label:labels.click, value:String(links?.click ?? ''), found:true},
+            deeplink: {label:labels.deeplink, value:String(links?.deeplink ?? ''), found:true}
+        });
+    }
+});
 
 function loveSimpleCheckType(type, label, tree, errors) {
     const root = tree.root;
@@ -1584,14 +1604,14 @@ function openCombinedCreativeDialog() {
                 <div class="love-combined-field">
                     <label for="love-combined-file">选择${mediaLabel}素材</label>
                     <input id="love-combined-file" type="file" accept="${accept}" multiple>
-                    <div class="love-combined-tip">可选。选择素材时会按创意 1、创意 2、创意 3……依次上传；不选择素材时只处理标题。</div>
+                    <div class="love-combined-tip">可选。选择素材时会按创意 1、创意 2、创意 3……依次上传；也可以不选择素材，仅更新预览图或标题。</div>
                 </div>
                 <div class="love-combined-field">
-                    <label>横版预览图（可选，最多10张）</label>
-                    <button type="button" id="love-combined-preview-select" class="love-combined-preview-zone" aria-label="选择最多10张横版预览图">
-                        ＋ 选择横版预览图
+                    <label>预览图（可选，最多10张）</label>
+                    <button type="button" id="love-combined-preview-select" class="love-combined-preview-zone" aria-label="选择最多10张预览图">
+                        ＋ 选择预览图
                     </button>
-                    <div id="love-combined-preview-info" class="love-combined-preview-info">仅用于「激励互动＋竖版视频」；按选择顺序对应创意。不选则跳过，规格由 vivo 校验。</div>
+                    <div id="love-combined-preview-info" class="love-combined-preview-info">适用于有「预览图/封面」上传区的创意；按顺序一一对应。普通视频不选时仍自动抽帧。</div>
                     <div id="love-combined-preview-actions" class="love-combined-preview-actions">
                         <button type="button" id="love-combined-preview-reselect">重新选择</button>
                         <button type="button" id="love-combined-preview-clear">清除素材</button>
@@ -1605,7 +1625,7 @@ function openCombinedCreativeDialog() {
                     <label for="love-combined-app-subtitle">副标题</label>
                     <input id="love-combined-app-subtitle" type="text" placeholder="请输入应用副标题或创意副标题" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-form-type="other" readonly>
                 </div>
-                <div class="love-combined-tip">可以只更新素材、只更新标题，或素材和标题一起更新；新建广告空白状态下建议素材和标题一起填写。运行中按 ESC 可立即停止。</div>
+                <div class="love-combined-tip">支持仅更新预览图、仅更新素材、仅更新标题，或组合更新。普通视频优先采用选中的预览图，未选的自动抽帧；新建空白广告仍需完整素材与文案。运行中按 ESC 可停止。</div>
             </div>
             <div class="love-combined-footer">
                 <button type="button" id="love-combined-cancel">取消</button>
@@ -1630,7 +1650,7 @@ function openCombinedCreativeDialog() {
 
     disableLoveTextInputHistory([appNameInput, appSubtitleInput]);
 
-    // The floating-ball dialog stays on this page: keep file HANDLES in
+    // The right-click dialog stays on this page: keep file HANDLES in
     // memory (not IndexedDB). Files are opened only when the task begins.
     const previewSelect = overlay.querySelector('#love-combined-preview-select');
     const previewReselect = overlay.querySelector('#love-combined-preview-reselect');
@@ -1643,13 +1663,13 @@ function openCombinedCreativeDialog() {
 
     const showPreviewSelection = () => {
         if (previewHandles.length) {
-            previewSelect.textContent = `✓ 已选择 ${previewHandles.length} 张横版预览图`;
+            previewSelect.textContent = `✓ 已选择 ${previewHandles.length} 张预览图`;
             previewInfo.textContent = previewMetas.slice(0, 3).map(x => x.name).join('、') +
                 (previewMetas.length > 3 ? '……' : '');
             previewActions.style.display = 'flex';
         } else {
-            previewSelect.textContent = '＋ 选择横版预览图';
-            previewInfo.textContent = '仅用于「激励互动＋竖版视频」；不选则跳过。最多10张，按选择顺序对应创意。';
+            previewSelect.textContent = '＋ 选择预览图';
+            previewInfo.textContent = '支持单独替换已有创意的预览图；普通视频未选择时继续抽帧。最多10张，按顺序对应创意。';
             previewActions.style.display = 'none';
         }
         previewSelect.disabled = pickingPreview;
@@ -1668,25 +1688,25 @@ function openCombinedCreativeDialog() {
         try {
             const handles = await window.showOpenFilePicker({
                 multiple: true,
-                id: 'love-combined-horizontal-preview',
-                types: [{description: '横版预览图（JPG/PNG）', accept: {
+                id: 'love-combined-creative-preview',
+                types: [{description: '预览图（JPG/PNG）', accept: {
                     'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png']
                 }}]
             });
             if (!handles?.length) return;
-            if (handles.length > 10) throw new Error('横版预览图最多选择10张。');
+            if (handles.length > 10) throw new Error('预览图最多选择10张。');
             const metas = [];
             for (const handle of handles) {
                 if (handle.kind !== 'file') throw new Error('选择的不是文件。');
                 const file = await handle.getFile();
-                if (!/\.(jpe?g|png)$/i.test(file.name)) throw new Error('横版预览图请选择 JPG/PNG 图片。');
+                if (!/\.(jpe?g|png)$/i.test(file.name)) throw new Error('预览图请选择 JPG/PNG 图片。');
                 metas.push({name:file.name, size:file.size, lastModified:file.lastModified});
             }
             previewHandles = handles;
             previewMetas = metas;
         } catch (err) {
             if (err?.name !== 'AbortError') {
-                showToast(`选择横版预览图失败：${err?.message || err}`, 5200, '⚠️');
+                showToast(`选择预览图失败：${err?.message || err}`, 5200, '⚠️');
             }
         } finally {
             pickingPreview = false;
@@ -1710,7 +1730,7 @@ function openCombinedCreativeDialog() {
         const hasPreview = previewHandles.length > 0;
 
         if (!hasMedia && !hasText && !hasPreview) {
-            showToast('请至少选择素材，或填写标题/副标题', 4500, '⚠️');
+            showToast('请至少选择素材、预览图，或填写标题/副标题', 4500, '⚠️');
             fileInput.focus();
             return;
         }
@@ -1744,12 +1764,12 @@ function openCombinedCreativeDialog() {
                     const meta = previewMetas[i];
                     if (!meta || file.name !== meta.name ||
                         file.size !== meta.size || file.lastModified !== meta.lastModified) {
-                        throw new Error(`第${i+1}张横版预览图文件已变化，请重新选择。`);
+                        throw new Error(`第${i+1}张预览图文件已变化，请重新选择。`);
                     }
                     previewFiles.push(file);
                 }
             } catch (err) {
-                showToast(`无法读取横版预览图：${err?.message || err}`, 5500, '⚠️');
+                showToast(`无法读取预览图：${err?.message || err}`, 5500, '⚠️');
                 return;
             }
         }
@@ -1776,7 +1796,7 @@ function openCombinedCreativeDialog() {
 }
 
 function detectCurrentAdCreativeContext() {
-    const displayType = detectSelectedOptionText(['开屏', 'Banner', '插屏', '原生', '激励互动']);
+    const displayType = detectSelectedOptionText(['开屏', 'Banner', '插屏', '原生', '激励互动', '信息流']);
     const creativeType = detectSelectedOptionTextStrict(['竖版大图', '横版大图', '竖版视频', '横版视频', '小图', '组图', '无图']) || detectSelectedOptionText(['竖版大图', '横版大图', '竖版视频', '横版视频', '小图', '组图', '无图']);
 
     let mediaKind = '';
@@ -1959,9 +1979,6 @@ async function waitForCreativeRootReadyForCombinedTextFill(index, timeoutMs = 50
 async function startCombinedCreativeAutomation(options) {
     installLoveRuntimeGuards();
     beginLoveCombinedTask();
-
-    const ball = document.getElementById('love-float-ball');
-    if (ball) ball.style.background = '#e6f7ff';
     // v19：每次一键任务启动都清空上一轮限流/错误记忆，避免上次“请求频繁”残留影响新一轮更新。
     resetRecentRateLimitRecord();
     LoveRuntime.lastNetworkActionAt = 0;
@@ -1974,32 +1991,30 @@ async function startCombinedCreativeAutomation(options) {
         const hasMedia = !!options.hasMedia && Array.isArray(options.files) && options.files.length > 0;
         const hasText = !!options.hasText && !!(options.appName || options.appSubtitle);
         const hasOptionalPreview = Array.isArray(options.previewFiles) && options.previewFiles.length > 0;
-        let previewApplicable = false;
-        if (hasOptionalPreview) {
-            // Only this new option asks the selected-format detector to wait.
-            // Existing manual image/video/text flows remain unchanged.
-            if (!globalThis.LoveHorizontalPreview) throw new Error('横版预览图模块没有加载，请刷新广告编辑页。');
-            const previewContext = await LoveHorizontalPreview.resolveContext({checkRunning: assertLoveCombinedNotCancelled});
-            previewApplicable = previewContext.applicable;
-            if (previewApplicable) {
-                // Tell the legacy video uploader to SKIP third-frame generation
-                // for the special vertical incentive creative.
-                options.displayType = previewContext.context.displayType;
-                options.creativeType = previewContext.context.creativeType;
-            } else if (!hasMedia && !hasText) {
-                throw new Error('当前创意类型不适用横版预览图：该图片仅用于「激励互动＋竖版视频」。');
-            }
+        if (hasOptionalPreview && !globalThis.LoveHorizontalPreview) {
+            throw new Error('预览图上传组件没有加载，请刷新广告编辑页。');
         }
         const mediaCount = hasMedia ? options.files.length : 0;
-        // Count validation is only relevant to the special incentive/vertical
-        // creative; other formats ignore additional preview selection.
-        if (previewApplicable && hasMedia && mediaCount !== options.previewFiles.length) {
-            throw new Error(`激励互动竖版视频必须一段视频对应一张横版预览图：已选${mediaCount}个视频、${options.previewFiles.length}张图片；尚未开始替换。`);
+        // Check counts before resolving formats or touching the platform.
+        if (hasOptionalPreview && hasMedia && options.previewFiles.length > mediaCount) {
+            throw new Error(`已选${mediaCount}个素材，但有${options.previewFiles.length}张预览图；预览图不能超过素材数量，尚未开始替换。`);
         }
-        if (previewApplicable && !hasMedia &&
+        if (hasOptionalPreview && !hasMedia &&
             options.previewFiles.length > LoveHorizontalPreview.existingIndices().length) {
-            throw new Error(`横版预览图数量超过现有创意数量（${LoveHorizontalPreview.existingIndices().length}），尚未修改。`);
+            throw new Error(`预览图数量超过现有创意数量（${LoveHorizontalPreview.existingIndices().length}），尚未修改。`);
         }
+        let isSpecialIncentivePreview = false;
+        if (hasOptionalPreview && hasMedia && options.mediaKind === 'video') {
+            // Only new video uploads need format resolution to distinguish the
+            // special incentive flow. Preview-only works on the labeled field
+            // directly, regardless of the currently selected creative type.
+            const previewContext = await LoveHorizontalPreview.resolveContext({checkRunning: assertLoveCombinedNotCancelled});
+            isSpecialIncentivePreview = previewContext.applicable;
+            options.displayType = previewContext.context.displayType;
+            options.creativeType = previewContext.context.creativeType;
+        }
+        // Partial covers are valid: remaining ordinary videos use third-frame
+        // extraction; special incentive videos simply keep their current cover.
         const textTargetCount = hasMedia ? mediaCount : Math.max(1, options.targetCount || getCombinedCreativeIndices().length || 1);
 
         if (hasMedia) {
@@ -2014,9 +2029,15 @@ async function startCombinedCreativeAutomation(options) {
             }
         }
 
-        if (previewApplicable && hasOptionalPreview) {
+        // Normal videos with newly selected media already upload their chosen
+        // covers inside runCombinedVideoFlow (and extract frames for gaps).
+        // Every other case, including preview-only and image creatives with a
+        // dedicated preview field, uses the per-creative replacement engine.
+        const replaceSeparately = hasOptionalPreview &&
+            (!hasMedia || isSpecialIncentivePreview || options.mediaKind !== 'video');
+        if (replaceSeparately) {
             const indexes = hasMedia
-                ? Array.from({length: mediaCount}, (_, i) => i + 1)
+                ? Array.from({length: options.previewFiles.length}, (_, i) => i + 1)
                 : LoveHorizontalPreview.existingIndices().slice(0, options.previewFiles.length);
             await LoveHorizontalPreview.replace({
                 files: options.previewFiles,
@@ -2038,7 +2059,6 @@ async function startCombinedCreativeAutomation(options) {
             showToast(`一键任务失败：${err.message || '请重试或检查页面'}`, 6500, '⚠️');
         }
     } finally {
-        if (ball) ball.style.background = '';
         finishLoveCombinedTask();
     }
 }
@@ -2242,7 +2262,9 @@ async function runCombinedVideoFlow(options) {
             continue;
         }
 
-        const previewOk = await retryCombinedUploadStep(`创意${index} 第三帧预览图上传`, async (attempt) => {
+        const selectedPreview = Array.isArray(options.previewFiles) ? options.previewFiles[i] : null;
+        const previewOk = await retryCombinedUploadStep(
+          `创意${index} ${selectedPreview ? '用户预览图' : '第三帧预览图'}上传`, async (attempt) => {
             const previewAreas = await waitCombinedPreviewAreaReady(index, 15000);
 
             // 激励互动 + 竖版视频是平台特殊结构：页面虽然有“预览图”字段，
@@ -2257,7 +2279,11 @@ async function runCombinedVideoFlow(options) {
             await clearCombinedExistingMediaField(index, 'preview', previewAreas.previewInput);
             const refreshedPreviewAreas = await waitCombinedPreviewAreaReady(index, 15000);
             const previewInput = refreshedPreviewAreas.previewInput || previewAreas.previewInput;
-            const filled = await fillCombinedPreviewByThirdFrame(previewInput, index, file);
+            // Explicitly selected covers take precedence. Never silently
+            // extract a frame when uploading a user cover fails.
+            const filled = selectedPreview
+                ? await fillCombinedPreviewBySelectedFile(previewInput, index, selectedPreview)
+                : await fillCombinedPreviewByThirdFrame(previewInput, index, file);
             const scopedPreviewError = getScopedPreviewUploadErrorText(getPreviewFieldContainer(previewInput, index));
             // v15：预览图字段在上传完成前会长期残留“请上传图片”，这只是 required 校验，
             // 不能作为硬失败；只在真正的接口/格式/频繁类错误时重试。
@@ -2268,7 +2294,7 @@ async function runCombinedVideoFlow(options) {
             if (shouldSkipCombinedPreviewForCurrentContext(options, index, latestAreasAfterPreview) && videoFieldHasUploadedMedia(index, latestAreasAfterPreview.videoInput)) {
                 continue;
             }
-            throw new Error(`创意${index} 第三帧预览图未确认成功`);
+            throw new Error(`创意${index} ${selectedPreview ? '用户预览图' : '第三帧预览图'}未确认成功`);
         }
     }
 }
@@ -3050,6 +3076,18 @@ async function fillCombinedPreviewByLocalThirdFrame(previewInput, index, sourceV
     noteNetworkAction();
 
     return await waitForCombinedPreviewFilled(previewContainer, snapshot, 22000);
+}
+
+async function fillCombinedPreviewBySelectedFile(previewInput, index, selectedPreviewFile) {
+    assertLoveCombinedNotCancelled();
+    const latestInput = identifyVideoUploadAreas(index, {silent:true}).previewInput || previewInput;
+    const container = getPreviewFieldContainer(latestInput, index);
+    if (!container || !latestInput) return false;
+    const snapshot = makePreviewSnapshot(container);
+    await waitForCombinedRequestCooldown('用户选择的预览图上传', index);
+    await strongUploadCombinedPreviewImage(latestInput, selectedPreviewFile);
+    noteNetworkAction();
+    return await waitForCombinedPreviewFilled(container, snapshot, 22000);
 }
 
 async function tryCombinedPlatformAutoGeneratePreview(previewInput, previewContainer, index) {
@@ -4550,8 +4588,10 @@ function getActiveCreativeRoot(index) {
         }
     }
 
-    const activePane = Array.from(document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [role="tabpanel"]'))
-        .find(pane => isElementVisible(pane) && normalizeText(pane.innerText || '').includes('视频'));
+    const visiblePanes = Array.from(document.querySelectorAll('.ep-tab-pane, .el-tab-pane, [role="tabpanel"]'))
+        .filter(pane => isElementVisible(pane));
+    const activePane = visiblePanes.find(pane => pane.classList.contains('is-active') || pane.getAttribute('aria-hidden') === 'false') ||
+        visiblePanes.find(pane => normalizeText(pane.innerText || '').includes('视频')) || visiblePanes[0];
 
     return activePane || null;
 }
@@ -4711,25 +4751,6 @@ async function waitForDialogClose(timeoutMs = 8000) {
     return false;
 }
 
-function setupDrag(container, handle) {
-    let isDragging = false;
-    let shiftX, shiftY;
-    handle.addEventListener('mousedown', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        isDragging = true;
-        container.classList.add('is-dragging');
-        const rect = container.getBoundingClientRect();
-        shiftX = e.clientX - rect.left; shiftY = e.clientY - rect.top;
-        container.style.removeProperty('bottom'); container.style.removeProperty('right');
-        container.style.top = rect.top + 'px'; container.style.left = rect.left + 'px';
-    });
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        container.style.left = (e.clientX - shiftX) + 'px'; container.style.top = (e.clientY - shiftY) + 'px';
-    });
-    window.addEventListener('mouseup', () => { isDragging = false; container.classList.remove('is-dragging'); });
-}
-
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-initFloatBall();
+initLoveQuickMenu();

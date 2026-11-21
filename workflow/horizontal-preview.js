@@ -1,6 +1,8 @@
 /*
- * LoveExtension - shared optional horizontal-preview uploader (V1.3.15).
- * Called by BOTH the plan-page workflow and the original floating-ball uploader.
+ * LoveExtension - shared optional preview/cover uploader (V1.3.47).
+ * Called by BOTH the plan-page workflow and the ad-page right-click uploader.
+ * The ad-page uploader can also replace any creative's labeled preview field,
+ * including preview-only actions, regardless of display/creative type.
  * Each target creative receives its OWN corresponding preview File. The
  * callers retrieve original files lazily from their handles. This module
  * NEVER stores File/Blob data or creates a file-content cache.
@@ -37,7 +39,7 @@
       if (stable >= 4) return { applicable: isApplicable(context), context };
       await sleep(300);
     }
-    throw new Error('无法确认当前广告编辑页的展现形式与创意类型，横版预览图未上传；请检查页面加载状态。');
+    throw new Error('无法确认当前广告编辑页的展现形式与创意类型，预览图未上传；请检查页面加载状态。');
   }
 
   // Existing creative tabs can include a close icon (e.g. "创意2 ×").
@@ -97,11 +99,11 @@
   async function replace({files, indexes, activate, checkRunning = () => {}} = {}) {
     if (!Array.isArray(indexes) || !indexes.length || indexes.some(i => !Number.isInteger(i) || i < 1 || i > 10) ||
         new Set(indexes).size !== indexes.length || typeof activate !== 'function') {
-      throw new Error('没有确认到需要更新横版预览图的创意，或创意列表重复。');
+      throw new Error('没有确认到需要更新预览图的创意，或创意列表重复。');
     }
     if (!Array.isArray(files) || files.length !== indexes.length || files.length > 10 ||
         files.some(f => !f || !/\.(jpe?g|png)$/i.test(f.name || ''))) {
-      throw new Error(`横版预览图必须与目标创意一一对应：${indexes.length}个创意需要${indexes.length}张预览图（不允许复用同一张）。`);
+      throw new Error(`预览图必须与目标创意一一对应：${indexes.length}个创意需要${indexes.length}张预览图（不允许复用同一张）。`);
     }
     const required = ['identifyVideoUploadAreas', 'getPreviewFieldContainer',
       'fieldHasExistingMedia', 'clearCombinedExistingMediaField',
@@ -129,7 +131,7 @@
       await checkRunning();
       await strongUploadCombinedPreviewImage(refreshed.input, file);
       const done = await waitForCombinedPreviewFilled(refreshed.field, snapshot, 30000);
-      if (!done) throw new Error(`创意${index}横版预览图未确认上传成功，请检查 vivo 平台返回的文件校验提示。`);
+      if (!done) throw new Error(`创意${index}预览图未确认上传成功，请检查 vivo 平台返回的文件校验提示。`);
     }
   }
 

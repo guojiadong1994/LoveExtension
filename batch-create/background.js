@@ -117,6 +117,32 @@
      // all earlier task states, including running/paused/failed/stopped tasks.
      if(String(message.path||'')!=='/marketing/promotion/plan')throw Error('请从广告计划列表的空白处右键启动');
      const config=message.config||{};
+     if(config.planTasks!==undefined){
+       if(!Array.isArray(config.planTasks)||!config.planTasks.length||config.planTasks.length>10)
+         throw Error('请配置1～10个任务');
+       const flattened=[];
+       config.planMap=[];
+       for(const [taskIndex,group] of config.planTasks.entries()){
+         if(!group||!Array.isArray(group.plans)||!group.plans.length)
+           throw Error(`任务${taskIndex+1}至少需要一条广告计划`);
+         for(const [planIndex,plan] of group.plans.entries()){
+           flattened.push(plan);
+           config.planMap.push({taskIndex,planIndex});
+         }
+       }
+       if(flattened.length>10)throw Error('整批最多创建10套广告计划');
+       config.names=flattened.map(p=>p?.name);
+       config.displays=flattened.map(p=>p?.display);
+       // Legacy fields stay populated for existing transition/diagnostic code.
+       config.planType=config.planTasks[0].planType;
+       config.scene=config.planTasks[0].scene;
+       config.creativeType=config.planTasks[0].creativeType;
+       config.spec=config.planTasks[0].spec;
+       config.mediaCount=0;
+       config.previewCount=0;
+       config.mediaKind='';
+       config.autoSubmit=true;
+     }
      if(!Array.isArray(config.names)||!config.names.length||config.names.length>10)throw Error('请填写1～10个广告名称');
      config.names=config.names.map(normalizeName);
      if(config.names.some(n=>!n||n.length>200)||new Set(config.names).size!==config.names.length)throw Error('广告名称不能重复、为空或超过200字');
@@ -150,7 +176,32 @@
        '信息流':['小图','组图','竖版大图','横版大图','竖版视频','横版视频']
      };
      const formats=config.displays??[config.display];
-     if(formats.some(d=>!typeOptions[d].includes(config.creativeType)))
+     if(config.planTasks){
+       for(const [taskIndex,group] of config.planTasks.entries()){
+         if(!['商店','非商店','联盟'].includes(group.planType)||
+            !['普通投放','极速唤新'].includes(group.scene))
+           throw Error(`任务${taskIndex+1}的计划类型或场景定制无效`);
+         if(!['无图','竖版大图','横版大图','小图','组图','竖版视频','横版视频'].includes(group.creativeType))
+           throw Error(`任务${taskIndex+1}的创意类型无效`);
+         if(!['1080*1920','1080*1880'].includes(group.spec))
+           throw Error(`任务${taskIndex+1}的创意规格无效`);
+         const kind=group.creativeType.includes('视频')?'video':group.creativeType==='无图'?'':'image';
+         if(group.mediaKind!==kind||!Number.isInteger(group.mediaCount)||
+            group.mediaCount<0||group.mediaCount>10||(kind&&!group.mediaCount)||(!kind&&group.mediaCount))
+           throw Error(`任务${taskIndex+1}素材数量或类型不符合创意类型`);
+         if(!Number.isInteger(group.previewCount)||group.previewCount<0||group.previewCount>group.mediaCount||
+            (kind!=='video'&&group.previewCount))
+           throw Error(`任务${taskIndex+1}的预览图数量或类型无效`);
+         if(!Array.isArray(group.previewIndices)||group.previewIndices.length!==group.previewCount||
+            new Set(group.previewIndices).size!==group.previewIndices.length||
+            group.previewIndices.some(i=>!Number.isInteger(i)||i<0||i>=group.mediaCount))
+           throw Error(`任务${taskIndex+1}的预览图与视频对应关系无效`);
+         for(const plan of group.plans){
+           if(!typeOptions[plan.display]?.includes(group.creativeType))
+             throw Error(`任务${taskIndex+1}计划「${plan.name}」展现形式「${plan.display}」不支持「${group.creativeType}」`);
+         }
+       }
+     }else if(formats.some(d=>!typeOptions[d].includes(config.creativeType)))
        throw Error('部分展现形式与公共创意类型不兼容，请修改后重试');
      if(!normalizeName(config.creativeType))throw Error('请选择创意类型');
      if((config.mediaCount||0)>10||(config.previewCount||0)>10)throw Error('素材数量不能超过10');
